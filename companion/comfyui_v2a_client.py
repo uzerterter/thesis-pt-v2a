@@ -236,7 +236,7 @@ fn = file_info["filename"]; sf = file_info.get("subfolder","")
 audio = session.get(f"{HOST}/view", params={"filename": fn, "subfolder": sf, "type": "output"}, timeout=60)
 audio.raise_for_status()
 
-output_path = f"output_{prompt_id}.flac"
+output_path = f"comfyUI_outputs/output_{prompt_id}.flac"
 pathlib.Path(output_path).write_bytes(audio.content)
 print(f"✅ Audio saved as: {output_path}")
 print(f"📊 File size: {len(audio.content) / 1024:.1f} KB")
