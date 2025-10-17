@@ -3,7 +3,7 @@ import os
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-HOST = "http://localhost:8190"
+HOST = "http://localhost:8188"  # ComfyUI SSH tunnel endpoint
 
 # Create a session with retry strategy for better ngrok compatibility
 session = requests.Session()
@@ -19,7 +19,38 @@ session.mount("https://", adapter)
 # Video file path - using the test video from your test data
 VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\test-data\MMAudio_examples\noSound\sora_beach.mp4"
 
+def get_user_inputs():
+    """Sammelt Benutzereingaben für Prompt, Negative Prompt und Seed"""
+    print("\n=== MMAudio Interactive Parameters ===")
+    print("Geben Sie die Parameter für die Audiogenerierung ein:\n")
+
+    prompt = input("🎵 Prompt (Default: \"\"): ").strip()
+    negative_prompt = input("❌ Negative Prompt (Default: \"voices, music\"): ").strip()
+    if not negative_prompt:
+        negative_prompt = "voices, music"
+
+    while True:
+        seed_input = input("🎲 Seed (Default: 42): ").strip()
+        if not seed_input:
+            seed = 42
+            break
+        try:
+            seed = int(seed_input)
+            break
+        except ValueError:
+            print("   ⚠️  Bitte geben Sie eine gültige Zahl ein.")
+    
+    print(f"\n✅ Parameter gesetzt:")
+    print(f"   Prompt: '{prompt}'")
+    print(f"   Negative Prompt: '{negative_prompt}'")
+    print(f"   Seed: {seed}\n")
+    
+    return prompt, negative_prompt, seed
+
 print(f"🌐 Connecting to ComfyUI via SSH tunnel: {HOST}")
+
+# Get user inputs first
+prompt, negative_prompt, seed = get_user_inputs()
 
 # Test connection first
 print("🔗 Testing connection...")
@@ -92,6 +123,18 @@ if "91" in wf and "inputs" in wf["91"]:
     print("📹 Updated workflow to use uploaded video: sora_beach.mp4")
 else:
     print("⚠️  Warning: Could not find video input node in workflow")
+
+# Update MMAudioSampler parameters - Node 92
+if "92" in wf and wf["92"]["class_type"] == "MMAudioSampler":
+    wf["92"]["inputs"]["prompt"] = prompt
+    wf["92"]["inputs"]["negative_prompt"] = negative_prompt
+    wf["92"]["inputs"]["seed"] = seed
+    print(f"🎵 Updated MMAudioSampler parameters:")
+    print(f"   Prompt: '{prompt}'")
+    print(f"   Negative Prompt: '{negative_prompt}'")
+    print(f"   Seed: {seed}")
+else:
+    print("⚠️  Warning: Could not find MMAudioSampler node in workflow")
 
 # 3) Kick off the job - ComfyUI expects workflow wrapped in "prompt" key
 print("🚀 Submitting workflow to ComfyUI...")
