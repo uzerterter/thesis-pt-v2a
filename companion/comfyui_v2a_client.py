@@ -1,7 +1,19 @@
 import json, time, requests, pathlib
 import os
+import hashlib
+import pickle
+import numpy as np
+import torch
+import av  # PyAV for efficient video processing
+from pathlib import Path
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+try:
+    import av
+except ImportError:
+    print("❌ PyAV nicht installiert. Installiere mit: pip install av")
+    exit(1)
 
 HOST = "http://localhost:8188"  # ComfyUI SSH tunnel endpoint
 
@@ -18,6 +30,118 @@ session.mount("https://", adapter)
 
 # Video file path - using the test video from your test data
 VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\test-data\MMAudio_examples\noSound\sora_beach.mp4"
+
+# Video Cache Configuration
+VIDEO_CACHE = {}
+CACHE_DIR = Path("./video_cache")
+
+def get_video_cache_key(video_path, duration, target_fps=25.0):
+    """Erstellt einen eindeutigen Cache Key für Video + Parameter"""
+    video_stat = Path(video_path).stat()
+    cache_data = f"{video_path}_{video_stat.st_mtime}_{video_stat.st_size}_{duration}_{target_fps}"
+    return hashlib.md5(cache_data.encode()).hexdigest()
+
+def load_video_optimized(video_path, duration=8.0, target_fps=25.0):
+    """
+    Optimiertes Video Loading - nur die benötigten Frames
+    Gibt ComfyUI IMAGE Format zurück: (frames, height, width, channels)
+    """
+    print(f"🎬 Loading video optimized: {Path(video_path).name}")
+    print(f"   Duration: {duration}s @ {target_fps} FPS")
+    
+    frames = []
+    max_frames = int(duration * target_fps)
+    frame_step = 1
+    
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        orig_fps = float(stream.average_rate)
+        
+        # Calculate frame step to get target fps
+        frame_step = max(1, int(orig_fps / target_fps))
+        
+        print(f"   Original FPS: {orig_fps:.1f}, Frame step: {frame_step}")
+        
+        frame_count = 0
+        for packet in container.demux(stream):
+            for frame in packet.decode():
+                if frame_count % frame_step == 0:
+                    if len(frames) >= max_frames:
+                        break
+                    
+                    # Convert to RGB numpy array
+                    frame_np = frame.to_ndarray(format='rgb24')
+                    frames.append(frame_np)
+                
+                frame_count += 1
+                
+                if len(frames) >= max_frames:
+                    break
+            
+            if len(frames) >= max_frames:
+                break
+    
+    if not frames:
+        raise ValueError(f"No frames could be loaded from {video_path}")
+    
+    # Convert to ComfyUI format: (frames, height, width, channels)
+    video_tensor = torch.from_numpy(np.stack(frames)).float() / 255.0
+    
+    print(f"   ✅ Loaded {len(frames)} frames, shape: {video_tensor.shape}")
+    return video_tensor
+
+def get_video_duration(video_path):
+    """Ermittelt die Duration eines Videos in Sekunden"""
+    try:
+        with av.open(video_path) as container:
+            stream = container.streams.video[0]
+            duration = float(stream.duration * stream.time_base)
+            return duration
+    except Exception as e:
+        print(f"⚠️  Konnte Video-Duration nicht ermitteln: {e}")
+        print("   Verwende Standard-Duration von 8.0s")
+        return 8.0
+
+def load_video_cached(video_path, duration=8.0, target_fps=25.0):
+    """Lädt Video mit Cache - Memory + Disk Cache"""
+    cache_key = get_video_cache_key(video_path, duration, target_fps)
+    
+    # 1. Memory Cache Check
+    if cache_key in VIDEO_CACHE:
+        print(f"⚡ Video from memory cache: {Path(video_path).name}")
+        return VIDEO_CACHE[cache_key]
+    
+    # 2. Disk Cache Check
+    cache_file = CACHE_DIR / f"{cache_key}.pkl"
+    if cache_file.exists():
+        print(f"📁 Video from disk cache: {cache_file.name}")
+        try:
+            with open(cache_file, 'rb') as f:
+                video_tensor = pickle.load(f)
+            VIDEO_CACHE[cache_key] = video_tensor
+            return video_tensor
+        except Exception as e:
+            print(f"   ⚠️  Cache file corrupted, reloading: {e}")
+    
+    # 3. Load and Cache
+    video_tensor = load_video_optimized(video_path, duration, target_fps)
+    
+    # Cache to memory and disk
+    VIDEO_CACHE[cache_key] = video_tensor
+    CACHE_DIR.mkdir(exist_ok=True)
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(video_tensor, f)
+        print(f"💾 Video cached to: {cache_file.name}")
+    except Exception as e:
+        print(f"   ⚠️  Could not cache to disk: {e}")
+    
+    return video_tensor
+
+def convert_tensor_for_api(video_tensor):
+    """Konvertiert Video Tensor für ComfyUI API"""
+    # ComfyUI erwartet das Tensor als nested list
+    return video_tensor.numpy().tolist()
 
 def get_user_inputs():
     """Sammelt Benutzereingaben für Prompt, Negative Prompt und Seed"""
@@ -43,7 +167,8 @@ def get_user_inputs():
     print(f"\n✅ Parameter gesetzt:")
     print(f"   Prompt: '{prompt}'")
     print(f"   Negative Prompt: '{negative_prompt}'")
-    print(f"   Seed: {seed}\n")
+    print(f"   Seed: {seed}")
+    print(f"   ⏱️  Duration: Wird automatisch aus Video ermittelt\n")
     
     return prompt, negative_prompt, seed
 
@@ -69,45 +194,24 @@ if not os.path.exists(VIDEO_PATH):
 
 print(f"📹 Video file found: {os.path.basename(VIDEO_PATH)} ({os.path.getsize(VIDEO_PATH) / 1024 / 1024:.1f} MB)")
 
-# 1) Upload video - try multiple ComfyUI API endpoints
-print("📤 Uploading video...")
-upload_success = False
+# ========== OPTIMIZED VIDEO PREPROCESSING ==========
+# Instead of uploading and using VHS_LoadVideo, we preprocess the video
+# and inject it directly into the MMAudioSampler
 
-# Method 1: Try /upload/image (most common ComfyUI endpoint)
-try:
-    with open(VIDEO_PATH, "rb") as f:
-        files = {"image": ("sora_beach.mp4", f, "video/mp4")}
-        r = session.post(f"{HOST}/upload/image", files=files, timeout=300)
-        r.raise_for_status()
-        print("✅ Video uploaded successfully via /upload/image!")
-        upload_success = True
-except Exception as e:
-    print(f"   Method 1 (/upload/image) failed: {e}")
+print(f"\n🚀 Starting optimized video preprocessing...")
 
-# Method 2: Try /api/upload if method 1 failed
-if not upload_success:
-    try:
-        with open(VIDEO_PATH, "rb") as f:
-            files = {"file": ("sora_beach.mp4", f, "video/mp4")}
-            r = session.post(f"{HOST}/api/upload", files=files, timeout=300)
-            r.raise_for_status()
-            print("✅ Video uploaded successfully via /api/upload!")
-            upload_success = True
-    except Exception as e:
-        print(f"   Method 2 (/api/upload) failed: {e}")
+# Ermittle Video Duration automatisch
+duration = get_video_duration(VIDEO_PATH)
+print(f"📏 Detected video duration: {duration:.2f}s")
 
-if not upload_success:
-    print("❌ All upload methods failed. The video might need to be copied manually via SSH.")
-    print("💡 Alternative: Copy the file directly to the ComfyUI input folder on the remote machine.")
-    print("   Command: scp -P 2223 'your_video.mp4' ludwig@129.187.43.14:/path/to/comfyui/input/")
-    
-    # Ask user if they want to continue without upload
-    response = input("Continue without upload? The video must already exist on the server (y/n): ")
-    if response.lower() != 'y':
-        exit(1)
-    print("📹 Proceeding with existing video file on server...")
+start_preprocess_time = time.time()
 
-# 2) Load your workflow JSON and ensure it references sora_beach.mp4
+# Load and preprocess video optimally
+video_tensor = load_video_cached(VIDEO_PATH, duration=duration)
+preprocess_time = time.time() - start_preprocess_time
+print(f"✅ Video preprocessing completed in {preprocess_time:.2f}s")
+
+# 2) Load your workflow JSON
 print("📋 Loading workflow...")
 workflow_path = "comfyUI_workflows/mmaudio_test-API(fp16).json"
 if not os.path.exists(workflow_path):
@@ -117,24 +221,37 @@ if not os.path.exists(workflow_path):
 wf = json.load(open(workflow_path, "r", encoding="utf-8"))
 print("✅ Workflow loaded successfully!")
 
-# Update the video input in the workflow - Node 91 is VHS_LoadVideo
-if "91" in wf and "inputs" in wf["91"]:
-    wf["91"]["inputs"]["video"] = "sora_beach.mp4"  # Use the uploaded filename
-    print("📹 Updated workflow to use uploaded video: sora_beach.mp4")
-else:
-    print("⚠️  Warning: Could not find video input node in workflow")
+# Remove VHS_LoadVideo and VHS_VideoInfo nodes - we're bypassing them!
+nodes_to_remove = []
+for node_id, node_data in wf.items():
+    if node_data.get("class_type") in ["VHS_LoadVideo", "VHS_LoadVideoFFmpeg", "VHS_VideoInfo"]:
+        nodes_to_remove.append(node_id)
+        print(f"🗑️  Removing {node_data.get('class_type')} node {node_id}")
+
+for node_id in nodes_to_remove:
+    del wf[node_id]
 
 # Update MMAudioSampler parameters - Node 92
 if "92" in wf and wf["92"]["class_type"] == "MMAudioSampler":
+    # Inject our preprocessed video directly
     wf["92"]["inputs"]["prompt"] = prompt
     wf["92"]["inputs"]["negative_prompt"] = negative_prompt
     wf["92"]["inputs"]["seed"] = seed
-    print(f"🎵 Updated MMAudioSampler parameters:")
+    wf["92"]["inputs"]["duration"] = duration
+    
+    # Convert video tensor to format ComfyUI API can handle
+    print("📦 Converting video tensor for API...")
+    wf["92"]["inputs"]["images"] = convert_tensor_for_api(video_tensor)
+    
+    print(f"🎵 Updated MMAudioSampler with optimized parameters:")
     print(f"   Prompt: '{prompt}'")
     print(f"   Negative Prompt: '{negative_prompt}'")
     print(f"   Seed: {seed}")
+    print(f"   Duration: {duration}s")
+    print(f"   Video tensor shape: {video_tensor.shape}")
 else:
-    print("⚠️  Warning: Could not find MMAudioSampler node in workflow")
+    print("❌ Could not find MMAudioSampler node in workflow")
+    exit(1)
 
 # 3) Kick off the job - ComfyUI expects workflow wrapped in "prompt" key
 print("🚀 Submitting workflow to ComfyUI...")
