@@ -1,15 +1,6 @@
 """
 MMAudio Standalone API
 
-A high-performance FastAPI server for video-to-audio generation using MMAudio.
-Optimized for speed with intelligent caching and minimal overhead.
-
-Features:
-- Direct MMAudio integration (no ComfyUI overhead)
-- Optimized video loading with frame caching
-- Model caching for faster repeated inference
-- RESTful API for easy integration
-- Built for AAX plugin integration
 """
 
 import os
@@ -87,7 +78,7 @@ app.add_middleware(
 )
 
 def get_cached_model(model_name: str = 'large_44k_v2') -> tuple[MMAudio, FeaturesUtils, ModelConfig]:
-    """Load and cache MMAudio model - using exact demo.py logic"""
+    """Load and cache MMAudio model - using exact mmaudio demo.py logic"""
     if model_name in MODEL_CACHE:
         logger.info(f"Using cached model: {model_name}")
         return MODEL_CACHE[model_name]

@@ -1,14 +1,5 @@
 # MMAudio Standalone API
 
-A high-performance FastAPI server for video-to-audio generation using MMAudio, designed for maximum speed and efficiency.
-
-## Features
-
-- 🚀 **Direct MMAudio Integration** - No ComfyUI overhead
-- ⚡ **Optimized Video Loading** - Only loads necessary frames
-- 💾 **Intelligent Caching** - Model and video caching for speed
-- 🔄 **RESTful API** - Easy integration with any client
-
 ## Quick Start
 
 ### 1. Install Dependencies
