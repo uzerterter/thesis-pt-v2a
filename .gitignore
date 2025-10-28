@@ -132,3 +132,4 @@ checkpoints/
 # Test outputs
 test-outputs/
 output/
+cache/
