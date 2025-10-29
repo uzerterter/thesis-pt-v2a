@@ -91,7 +91,7 @@ dtype = torch.bfloat16
 #
 # SMART EVICTION STRATEGIES:
 # 1. LRU (Least Recently Used): Removes oldest accessed videos when size limit hit
-# 2. TTL (Time To Live): Automatic expiry after configurable time (90 min default)
+# 2. TTL (Time To Live): Background thread cleans expired videos every 15 minutes
 # 3. Size-Based: Intelligent memory estimation and size-aware eviction
 # 4. Thread-Safe: Concurrent access from multiple FastAPI workers
 #
@@ -140,6 +140,12 @@ class SmartVideoCache:
             'total_entries': 0
         }
         self._lock = threading.RLock()  # Thread-safe access
+        self._stop_cleanup = threading.Event()
+        
+        # Start background TTL cleanup thread
+        self._cleanup_thread = threading.Thread(target=self._background_ttl_cleanup, daemon=True)
+        self._cleanup_thread.start()
+        logger.info(f"🕒 TTL cleanup thread started (interval: {max(ttl_minutes // 6, 5)} minutes)")
     
     def _estimate_tensor_size_mb(self, video_info) -> float:
         """Estimate memory usage of video_info object in MB"""
@@ -181,6 +187,29 @@ class SmartVideoCache:
             self.stats['current_size_mb'] -= entry.estimated_size_mb
             self.stats['total_entries'] -= 1
             logger.info(f"🕒 TTL EVICTED: {key[:8]}... (age: {(current_time - entry.created_at)/60:.1f}min)")
+    
+    def _background_ttl_cleanup(self):
+        """Background thread for periodic TTL cleanup (runs even when API is idle)"""
+        # Run cleanup every 15 minutes or 1/6 of TTL (whichever is larger)
+        cleanup_interval = max(self.ttl_seconds / 6, 300)  # Minimum 5 minutes
+        
+        while not self._stop_cleanup.is_set():
+            self._stop_cleanup.wait(cleanup_interval)
+            
+            if self._stop_cleanup.is_set():
+                break
+            
+            # Perform TTL cleanup with lock
+            with self._lock:
+                if self.cache:
+                    before_count = len(self.cache)
+                    before_size = self.stats['current_size_mb']
+                    self._cleanup_expired()
+                    after_count = len(self.cache)
+                    
+                    if before_count != after_count:
+                        freed_mb = before_size - self.stats['current_size_mb']
+                        logger.info(f"🧹 Background TTL cleanup: {before_count - after_count} videos evicted, {freed_mb:.1f}MB freed")
     
     def _enforce_size_limit(self):
         """Remove LRU entries if size limit exceeded"""
@@ -269,6 +298,13 @@ class SmartVideoCache:
                 'current_size_mb': 0,
                 'total_entries': 0
             }
+    
+    def shutdown(self):
+        """Stop background cleanup thread (called on server shutdown)"""
+        self._stop_cleanup.set()
+        if self._cleanup_thread.is_alive():
+            self._cleanup_thread.join(timeout=5)
+            logger.info("🛑 TTL cleanup thread stopped")
 
 # Cache Configuration (Environment Variables supported)
 VIDEO_CACHE_MAX_GB = float(os.getenv('VIDEO_CACHE_MAX_GB', '32'))  # 32GB default

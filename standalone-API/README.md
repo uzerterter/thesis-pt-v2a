@@ -5,7 +5,7 @@
 ### 1. Install Dependencies
 
 ```bash
-cd /path/to/thesis-pt-v2a/external/standalone-API
+cd /path/to/thesis-pt-v2a/standalone-API
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -43,6 +43,9 @@ Health check endpoint
 
 ### `GET /models`
 List available MMAudio models and currently loaded models
+
+### `POST /cache/stats`
+View Cache stats (RAM, VRAM, ...)
 
 ### `POST /generate`
 Generate audio from video
