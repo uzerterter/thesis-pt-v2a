@@ -17,7 +17,10 @@ private:
     PtV2AProcessor& processor;
 
     juce::TextEditor prompt;
-    juce::TextButton renderButton { "Render (stub)" };
+    juce::TextButton renderButton { "Render Audio" };
+    
+    /** Handle render button click with full API integration */
+    void handleRenderButtonClicked();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PtV2AEditor)
 };
