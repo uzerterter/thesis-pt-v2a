@@ -133,3 +133,4 @@ checkpoints/
 test-outputs/
 output/
 cache/
+logs/

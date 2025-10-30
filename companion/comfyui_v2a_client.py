@@ -17,7 +17,7 @@ session.mount("http://", adapter)
 session.mount("https://", adapter)
 
 # Video file path - using the test video from your test data
-VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\test-data\MMAudio_examples\noSound\sora_beach.mp4"
+VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\data\MMAudio_examples\noSound\sora_beach.mp4"
 
 def get_user_inputs():
     """Sammelt Benutzereingaben für Prompt, Negative Prompt und Seed"""
