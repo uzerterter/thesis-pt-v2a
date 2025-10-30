@@ -39,7 +39,8 @@ from typing import Optional
 
 # Configuration
 DEFAULT_API_URL = "http://localhost:8000"
-DEFAULT_VIDEO_PATH = "/mnt/disk1/users/ludwig/ludwig-thesis/model-tests/data/MMAudio_examples/noSound/sora_beach.mp4"
+#DEFAULT_VIDEO_PATH = "/mnt/disk1/users/ludwig/ludwig-thesis/model-tests/data/MMAudio_examples/noSound/sora_beach.mp4"
+DEFAULT_VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\data\MMAudio_examples\noSound\sora_galloping.mp4"
 
 # Supported video formats for Pro Tools integration
 SUPPORTED_VIDEO_FORMATS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
@@ -104,6 +105,12 @@ Examples:
         '--output', '-o',
         type=str,
         help='Output file path (default: auto-generated in ./standalone-API_outputs/)'
+    )
+    
+    parser.add_argument(
+        '--temp',
+        action='store_true',
+        help='Use system temp directory for output (useful when called from Pro Tools)'
     )
     
     # Advanced parameters
@@ -224,6 +231,7 @@ def get_user_inputs_interactive():
         except ValueError:
             print("   ⚠️  Please enter a valid number.")
     
+
     print(f"\n✅ Parameters set:")
     print(f"   Prompt: '{prompt}'")
     print(f"   Negative Prompt: '{negative_prompt}'")
@@ -253,11 +261,22 @@ def get_available_models(api_url: str, quiet: bool = False) -> Optional[dict]:
             print(f"⚠️  Could not fetch models: {e}")
         return None
 
-def create_output_directory():
-    """Create output directory if it doesn't exist"""
-    output_dir = Path("./standalone-API_outputs")
-    output_dir.mkdir(exist_ok=True)
-    return output_dir
+def create_output_directory(use_temp=False):
+    """Create output directory
+    
+    Args:
+        use_temp: If True, use system temp directory (for Pro Tools). 
+                  If False, use ./standalone-API_outputs (default)
+    """
+    if use_temp:
+        import tempfile
+        temp_base = Path(tempfile.gettempdir()) / "pt_v2a_outputs"
+        temp_base.mkdir(exist_ok=True, parents=True)
+        return temp_base
+    else:
+        output_dir = Path("./standalone-API_outputs")
+        output_dir.mkdir(exist_ok=True)
+        return output_dir
 
 def generate_audio(
     api_url: str,
@@ -270,6 +289,7 @@ def generate_audio(
     num_steps: int = 25,
     cfg_strength: float = 4.5,
     output_path: Optional[str] = None,
+    use_temp: bool = False,
     timeout: int = 300,
     quiet: bool = False,
     verbose: bool = False
@@ -344,20 +364,23 @@ def generate_audio(
             final_output_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             # Auto-generate output filename
-            create_output_directory()
+            output_dir = create_output_directory(use_temp=use_temp)
             timestamp = int(time.time())
             output_filename = f"generated_audio_{timestamp}_{seed}.flac"
-            final_output_path = Path(f"./standalone-API_outputs/{output_filename}")
+            final_output_path = output_dir / output_filename
 
         # Save audio file
         with open(final_output_path, 'wb') as f:
             f.write(response.content)
         
+        # Always return absolute path (important for Pro Tools plugin integration)
+        absolute_path = final_output_path.absolute()
+        
         if not quiet:
-            print(f"📁 Audio saved as: {final_output_path.absolute()}")
+            print(f"📁 Audio saved as: {absolute_path}")
             print(f"📊 File size: {len(response.content) / 1024:.1f} KB")
         
-        return str(final_output_path)
+        return str(absolute_path)
         
     except requests.exceptions.Timeout:
         if not quiet:
@@ -459,6 +482,7 @@ def main():
             num_steps=args.steps,
             cfg_strength=args.cfg_strength,
             output_path=args.output,
+            use_temp=args.temp,
             timeout=args.timeout,
             quiet=quiet,
             verbose=verbose
@@ -482,8 +506,12 @@ def main():
             print(f"\n\n⚠️  Operation cancelled by user.")
         return 1
     except Exception as e:
-        if not quiet:
-            print(f"\n❌ Unexpected error: {e}")
+        # Print errors to STDOUT (not stderr) so Pro Tools plugin can see them
+        error_msg = f"ERROR: {e}"
+        
+        # In quiet mode, print to stdout so plugin can read it
+        print(error_msg)
+        
         return 1
 
 if __name__ == "__main__":
