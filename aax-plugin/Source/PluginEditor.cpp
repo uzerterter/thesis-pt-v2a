@@ -44,8 +44,36 @@ void PtV2AEditor::handleRenderButtonClicked()
     }
     
     // For now, use a test video file
-    // TODO: In Phase 1, extract actual video from Pro Tools timeline
-    juce::File testVideo ("/mnt/disk1/users/ludwig/ludwig-thesis/model-tests/data/MMAudio_examples/noSound/sora_beach.mp4");
+    // TODO: In Phase 2, extract actual video from Pro Tools timeline
+    
+    // Try to find test video relative to plugin or in known locations
+    juce::File testVideo;
+    
+    // Get plugin location and navigate to project root
+    auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+    auto pluginDir = pluginFile.getParentDirectory();
+    
+#if JUCE_WINDOWS
+    // Navigate to thesis-pt-v2a root from build directory
+    auto projectRoot = pluginDir;
+    for (int i = 0; i < 8; ++i)  // Go up enough levels to find project root
+    {
+        if (projectRoot.getChildFile("companion").exists() &&
+            projectRoot.getChildFile("aax-plugin").exists())
+            break;
+        projectRoot = projectRoot.getParentDirectory();
+    }
+    
+    // Try relative path from project root
+    auto testVideoPath = projectRoot.getChildFile("..\\..\\..\\model-tests\\data\\MMAudio_examples\\noSound\\sora_beach.mp4");
+    if (testVideoPath.existsAsFile())
+        testVideo = testVideoPath;
+    else
+        testVideo = juce::File("C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\model-tests\\data\\MMAudio_examples\\noSound\\sora_beach.mp4");
+#else
+    // macOS/Linux paths
+    testVideo = juce::File("/mnt/disk1/users/ludwig/ludwig-thesis/model-tests/data/MMAudio_examples/noSound/sora_beach.mp4");
+#endif
     
     if (!testVideo.existsAsFile())
     {
@@ -53,7 +81,8 @@ void PtV2AEditor::handleRenderButtonClicked()
             juce::MessageBoxIconType::WarningIcon,
             "Test Video Not Found",
             "Test video file not found:\n" + testVideo.getFullPathName() + "\n\n"
-            "Please update the path in PluginEditor.cpp or place a video at this location.",
+            "Please place a test video at this location, or update the path in PluginEditor.cpp.\n\n"
+            "Expected: sora_beach.mp4 in model-tests\\data\\MMAudio_examples\\noSound\\",
             "OK"
         );
         

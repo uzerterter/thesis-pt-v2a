@@ -3,6 +3,7 @@
 ## ✅ Implementation Complete!
 
 ### What We Built:
+
 1. **API Communication Layer** in `PluginProcessor.cpp`:
    - `generateAudioFromVideo()` - Main API call function
    - `isAPIAvailable()` - Health check for API server
@@ -28,7 +29,9 @@
 ## 🧪 Testing Steps
 
 ### Prerequisites:
+
 1. **API Server Running:**
+
    ```bash
    docker restart mmaudio-api
    # Wait 10 seconds for startup
@@ -36,12 +39,14 @@
    ```
 
 2. **Test Video Available:**
+
    ```bash
    # Default test video location:
    ls -lh /mnt/disk1/users/ludwig/ludwig-thesis/model-tests/data/MMAudio_examples/noSound/sora_beach.mp4
    ```
 
 3. **Python Client Accessible:**
+
    ```bash
    python3 /mnt/disk1/users/ludwig/ludwig-thesis/thesis-pt-v2a/companion/standalone_api_client.py --help
    ```
@@ -64,7 +69,9 @@ ls -lh Builds/pt_v2a_artefacts/Debug/AAX/pt_v2a.aaxplugin
 ```
 
 **Expected Output:**
+
 - Build completes without errors
+
 - AAX plugin bundle created in `Builds/pt_v2a_artefacts/Debug/AAX/`
 
 ---
@@ -75,6 +82,7 @@ ls -lh Builds/pt_v2a_artefacts/Debug/AAX/pt_v2a.aaxplugin
 The plugin automatically checks API availability when "Render Audio" is clicked.
 
 **Manual Test:**
+
 ```bash
 curl http://localhost:8000/
 # Expected: {"message":"MMAudio Standalone API","status":"running",...}
@@ -89,12 +97,14 @@ curl http://localhost:8000/models
 
 **Debug Output (check JUCE console):**
 When plugin loads, you should see:
+
 ```
 Found Python: /usr/bin/python3 (Python 3.12.x)
 Found API client script: /path/to/standalone_api_client.py
 ```
 
 **Manual Test:**
+
 ```bash
 # Test Python detection logic
 /usr/bin/python3 --version
@@ -114,6 +124,7 @@ python3 companion/standalone_api_client.py \
 ### Test 4: End-to-End Generation (Plugin UI)
 
 1. **Load Plugin in Pro Tools** (or JUCE AudioPluginHost for testing):
+
    ```bash
    # Quick test without Pro Tools (if you have AudioPluginHost)
    /path/to/AudioPluginHost Builds/pt_v2a_artefacts/Debug/AAX/pt_v2a.aaxplugin
@@ -126,6 +137,7 @@ python3 companion/standalone_api_client.py \
    - Success dialog appears with output file path
 
 3. **Check Console Logs:**
+
    ```
    === Render Button Clicked ===
    Prompt: ocean waves and seagulls
@@ -142,6 +154,7 @@ python3 companion/standalone_api_client.py \
    ```
 
 4. **Verify Generated Audio:**
+
    ```bash
    ls -lh /path/to/generated_audio_*.flac
    # Play audio to verify
@@ -153,6 +166,7 @@ python3 companion/standalone_api_client.py \
 ### Test 5: Error Scenarios
 
 #### Test 5a: API Not Running
+
 ```bash
 docker stop mmaudio-api
 ```
@@ -160,18 +174,21 @@ docker stop mmaudio-api
 - **Expected:** Alert dialog: "MMAudio API is not running! Please start..."
 
 #### Test 5b: Invalid Video Path
+
 - Edit `PluginEditor.cpp` line with test video path to non-existent file
 - Rebuild plugin
 - Click "Render Audio"
 - **Expected:** Alert dialog: "Test video file not found: ..."
 
 #### Test 5c: Python Not Found
+
 - Edit `getPythonExecutable()` to return invalid path
 - Rebuild plugin
 - Click "Render Audio"
 - **Expected:** Error: "Failed to start API client process"
 
 #### Test 5d: API Timeout
+
 - Temporarily reduce timeout in `generateAudioFromVideo()` to 10 seconds
 - Click "Render Audio"
 - **Expected:** Error after 10s: "API request timed out after 10 seconds"
@@ -193,6 +210,7 @@ docker stop mmaudio-api
 ## 🐛 Known Issues & Limitations
 
 ### Current Limitations:
+
 1. **Hardcoded Test Video:**
    - Currently uses fixed test video path
    - **TODO Phase 2:** Extract actual video from Pro Tools timeline
@@ -217,14 +235,17 @@ docker stop mmaudio-api
 ### Platform-Specific Notes:
 
 #### macOS:
+
 - Python 3 usually at `/usr/bin/python3` or `/opt/homebrew/bin/python3`
 - AAX plugins go in: `~/Library/Application Support/Avid/Audio/Plug-Ins/`
 
 #### Windows:
+
 - Python detection tries `python`, `python3`, and `py -3`
 - Subprocess command syntax may need adjustment for Windows paths with spaces
 
 #### Linux:
+
 - Python 3 usually at `/usr/bin/python3`
 - AAX plugins for Pro Tools on Linux are rare (most use VST3)
 
@@ -233,6 +254,7 @@ docker stop mmaudio-api
 ## 🔍 Debugging Tips
 
 ### Enable Verbose Logging:
+
 ```cpp
 // In PluginProcessor.cpp, add more DBG() statements:
 DBG ("Current working directory: " + juce::File::getCurrentWorkingDirectory().getFullPathName());
@@ -241,11 +263,13 @@ DBG ("Script path: " + getAPIClientScript().getFullPathName());
 ```
 
 ### Check JUCE Console Output:
+
 - In Pro Tools: Window → Show Console
 - In AudioPluginHost: Console output in terminal
 - Look for `DBG()` messages and errors
 
 ### Test Python Client Standalone:
+
 ```bash
 # Dry-run to verify Python client works
 cd /mnt/disk1/users/ludwig/ludwig-thesis/thesis-pt-v2a
@@ -258,6 +282,7 @@ python3 companion/standalone_api_client.py \
 ```
 
 ### Check API Logs:
+
 ```bash
 # Real-time API logs
 docker logs -f mmaudio-api

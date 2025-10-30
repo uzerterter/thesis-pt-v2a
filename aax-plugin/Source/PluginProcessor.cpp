@@ -99,14 +99,71 @@ juce::File PtV2AProcessor::getAPIClientScript()
     auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
     auto pluginDir = pluginFile.getParentDirectory();
     
-    // Navigate to thesis-pt-v2a root
-    // From: aax-plugin/Builds/MacOSX/build/Debug/pt_v2a.component
+    DBG ("Plugin directory: " + pluginDir.getFullPathName());
+    
+    // Navigate to thesis-pt-v2a root based on platform-specific build structure
+    juce::File thesisRoot;
+    
+#if JUCE_WINDOWS
+    // Windows AAX build structure:
+    // From: build/pt_v2a_artefacts/Debug/AAX/pt_v2a.aaxplugin/Contents/x64/pt_v2a.aaxplugin
     // To:   thesis-pt-v2a/companion/standalone_api_client.py
-    auto thesisRoot = pluginDir.getParentDirectory()  // build
-                                .getParentDirectory()  // MacOSX
-                                .getParentDirectory()  // Builds
-                                .getParentDirectory()  // aax-plugin
-                                .getParentDirectory(); // thesis-pt-v2a
+    
+    // Try different navigation paths for different build locations
+    auto candidate1 = pluginDir.getParentDirectory()      // x64
+                                .getParentDirectory()      // Contents
+                                .getParentDirectory()      // pt_v2a.aaxplugin
+                                .getParentDirectory()      // AAX
+                                .getParentDirectory()      // Debug
+                                .getParentDirectory()      // pt_v2a_artefacts
+                                .getParentDirectory()      // build
+                                .getParentDirectory();     // thesis-pt-v2a
+    
+    auto candidate2 = pluginDir.getParentDirectory()      // Contents
+                                .getParentDirectory()      // pt_v2a.aaxplugin
+                                .getParentDirectory()      // AAX
+                                .getParentDirectory()      // Debug
+                                .getParentDirectory()      // pt_v2a_artefacts
+                                .getParentDirectory()      // build
+                                .getParentDirectory();     // thesis-pt-v2a
+    
+    // Also try from installed location
+    auto candidate3 = pluginDir.getParentDirectory()      // Contents
+                                .getParentDirectory()      // pt_v2a.aaxplugin
+                                .getParentDirectory()      // Plug-Ins
+                                .getParentDirectory()      // Audio
+                                .getParentDirectory();     // May vary
+    
+    if (candidate1.getChildFile("companion").exists())
+        thesisRoot = candidate1;
+    else if (candidate2.getChildFile("companion").exists())
+        thesisRoot = candidate2;
+    else if (candidate3.getChildFile("companion").exists())
+        thesisRoot = candidate3;
+    else
+        thesisRoot = candidate1;  // Fallback to first candidate
+        
+#elif JUCE_MAC
+    // macOS AAX build structure:
+    // From: aax-plugin/Builds/MacOSX/build/Debug/pt_v2a.aaxplugin/Contents/MacOS/pt_v2a
+    // To:   thesis-pt-v2a/companion/standalone_api_client.py
+    thesisRoot = pluginDir.getParentDirectory()  // Contents
+                          .getParentDirectory()  // pt_v2a.aaxplugin
+                          .getParentDirectory()  // Debug
+                          .getParentDirectory()  // build
+                          .getParentDirectory()  // MacOSX
+                          .getParentDirectory()  // Builds
+                          .getParentDirectory()  // aax-plugin
+                          .getParentDirectory(); // thesis-pt-v2a
+#else
+    // Linux fallback
+    thesisRoot = pluginDir.getParentDirectory()
+                          .getParentDirectory()
+                          .getParentDirectory()
+                          .getParentDirectory();
+#endif
+    
+    DBG ("Thesis root candidate: " + thesisRoot.getFullPathName());
     
     auto scriptPath = thesisRoot.getChildFile ("companion")
                                  .getChildFile ("standalone_api_client.py");
@@ -117,15 +174,42 @@ juce::File PtV2AProcessor::getAPIClientScript()
         return scriptPath;
     }
     
-    // Fallback: Try absolute path (for development)
-    auto fallbackPath = juce::File ("/mnt/disk1/users/ludwig/ludwig-thesis/thesis-pt-v2a/companion/standalone_api_client.py");
-    if (fallbackPath.existsAsFile())
+    DBG ("Script not found at: " + scriptPath.getFullPathName());
+    
+    // Fallback: Try relative to current working directory
+    auto cwdScript = juce::File::getCurrentWorkingDirectory()
+                         .getChildFile ("companion")
+                         .getChildFile ("standalone_api_client.py");
+    
+    if (cwdScript.existsAsFile())
     {
-        DBG ("Using fallback API client script: " + fallbackPath.getFullPathName());
-        return fallbackPath;
+        DBG ("Found API client script in CWD: " + cwdScript.getFullPathName());
+        return cwdScript;
     }
     
-    DBG ("ERROR: API client script not found!");
+    DBG ("Script not found at CWD: " + cwdScript.getFullPathName());
+    
+#if JUCE_WINDOWS
+    // Windows-specific fallback: Try known absolute paths
+    juce::StringArray fallbackPaths = {
+        "C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\thesis-pt-v2a\\companion\\standalone_api_client.py",
+        "C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\thesis-pt-v2a\\companion\\standalone_api_client.py"
+    };
+    
+    for (const auto& path : fallbackPaths)
+    {
+        juce::File fallbackFile (path);
+        if (fallbackFile.existsAsFile())
+        {
+            DBG ("Found API client script via fallback: " + fallbackFile.getFullPathName());
+            return fallbackFile;
+        }
+        DBG ("Script not found at fallback: " + path);
+    }
+#endif
+    
+    DBG ("ERROR: API client script not found in any location!");
+    DBG ("Current working directory: " + juce::File::getCurrentWorkingDirectory().getFullPathName());
     return juce::File();
 }
 
@@ -186,7 +270,11 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     auto scriptFile = getAPIClientScript();
     if (!scriptFile.existsAsFile())
     {
-        juce::String error = "API client script not found. Expected at: " + scriptFile.getFullPathName();
+        juce::String error = "API client script not found.\n\n";
+        error += "Please check the Pro Tools console for detailed search paths.\n\n";
+        error += "Expected location:\n";
+        error += "C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\thesis-pt-v2a\\companion\\standalone_api_client.py";
+        
         DBG ("ERROR: " + error);
         if (errorMessage != nullptr)
             *errorMessage = error;
@@ -216,6 +304,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     args.add ("--seed");
     args.add (juce::String (seed));
     
+    args.add ("--temp");   // Use temp directory for Pro Tools compatibility
     args.add ("--quiet");  // Minimal output for parsing
     
     // Build command string
@@ -234,7 +323,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     
     DBG ("Executing command: " + command);
     
-    // Execute subprocess
+    // Execute subprocess - simple approach without file redirection
     juce::ChildProcess apiProcess;
     if (!apiProcess.start (command))
     {
@@ -260,7 +349,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
         return {};
     }
     
-    // Read output (should be single line with output file path in quiet mode)
+    // Read stdout only (stderr will be lost, but safer for Pro Tools)
     juce::String output = apiProcess.readAllProcessOutput().trim();
     
     DBG ("API client output: " + output);
@@ -269,7 +358,22 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     int exitCode = apiProcess.getExitCode();
     if (exitCode != 0)
     {
-        juce::String error = "API client failed with exit code " + juce::String (exitCode) + "\nOutput: " + output;
+        // Python script failed - output contains error message
+        juce::String error = "API client failed with exit code " + juce::String (exitCode);
+        
+        if (output.isNotEmpty())
+        {
+            error += "\n\n" + output;
+        }
+        else
+        {
+            error += "\n\nNo error message from script. Check:\n";
+            error += "1. Python is installed and in PATH\n";
+            error += "2. API server is running on localhost:8000\n";
+            error += "3. Video file exists and is accessible\n";
+            error += "4. Required Python packages are installed";
+        }
+        
         DBG ("ERROR: " + error);
         if (errorMessage != nullptr)
             *errorMessage = error;
