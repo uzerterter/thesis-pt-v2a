@@ -24,7 +24,7 @@ import torch
 import numpy as np
 import av
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -43,34 +43,10 @@ except ImportError as e:
     logging.error("Please check MMAUDIO_PATH in the script")
     sys.exit(1)
 
-# Configure logging with custom handler to capture logs
+# Configure logging
 setup_eval_logging()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Ring buffer for storing recent log messages
-from collections import deque
-LOG_BUFFER_SIZE = 500  # Keep last 500 log entries
-log_buffer = deque(maxlen=LOG_BUFFER_SIZE)
-
-class BufferHandler(logging.Handler):
-    """Custom log handler that stores logs in memory buffer"""
-    def emit(self, record):
-        try:
-            log_entry = {
-                "timestamp": datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S'),
-                "level": record.levelname,
-                "message": self.format(record),
-                "module": record.module
-            }
-            log_buffer.append(log_entry)
-        except Exception:
-            self.handleError(record)
-
-# Add buffer handler to root logger
-buffer_handler = BufferHandler()
-buffer_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-logging.getLogger().addHandler(buffer_handler)
 
 # Global configuration
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -526,85 +502,6 @@ async def list_models():
         "loaded_models": list(MODEL_CACHE.keys())
     }
 
-@app.get("/logs")
-async def get_logs(limit: int = 100, level: Optional[str] = None):
-    """
-    Get recent log entries from the API server
-    
-    Parameters:
-    - limit: Maximum number of log entries to return (default: 100, max: 500)
-    - level: Filter by log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-    
-    Returns:
-    - List of log entries with timestamp, level, message, and module
-    
-    Example:
-    - GET /logs?limit=50
-    - GET /logs?level=ERROR
-    - GET /logs?limit=20&level=INFO
-    """
-    # Limit the number of entries
-    limit = min(limit, LOG_BUFFER_SIZE)
-    
-    # Get logs from buffer
-    logs = list(log_buffer)
-    
-    # Filter by level if specified
-    if level:
-        level_upper = level.upper()
-        logs = [log for log in logs if log["level"] == level_upper]
-    
-    # Return most recent entries (reverse order so newest first)
-    logs.reverse()
-    return {
-        "total_entries": len(logs),
-        "returned_entries": min(limit, len(logs)),
-        "buffer_size": LOG_BUFFER_SIZE,
-        "filter_level": level.upper() if level else None,
-        "logs": logs[:limit]
-    }
-
-@app.get("/logs/tail")
-async def tail_logs(lines: int = 50):
-    """
-    Get recent logs in plain text format (like 'tail -f')
-    
-    Parameters:
-    - lines: Number of most recent log lines to return (default: 50, max: 500)
-    
-    Returns:
-    - Plain text with formatted log entries
-    
-    Usage:
-    - curl http://localhost:8000/logs/tail
-    - curl http://localhost:8000/logs/tail?lines=100
-    """
-    lines = min(lines, LOG_BUFFER_SIZE)
-    
-    # Get most recent logs
-    logs = list(log_buffer)[-lines:]
-    
-    # Format as plain text
-    text_output = []
-    text_output.append("=" * 80)
-    text_output.append(f"MMAudio API Logs (last {len(logs)} entries)")
-    text_output.append("=" * 80)
-    text_output.append("")
-    
-    for log_entry in logs:
-        text_output.append(f"[{log_entry['timestamp']}] {log_entry['level']:8} | {log_entry['message']}")
-    
-    text_output.append("")
-    text_output.append("=" * 80)
-    
-    return StreamingResponse(
-        iter(["\n".join(text_output)]),
-        media_type="text/plain",
-        headers={
-            "Content-Disposition": "inline"
-        }
-    )
-
 @app.get("/cache/stats")
 async def get_cache_stats():
     """Get comprehensive cache statistics and system memory info"""
@@ -754,8 +651,6 @@ async def generate_audio(
         
         # Use torchaudio.save exactly like demo.py (no backend parameter)
         torchaudio.save(output_path, audio, seq_cfg.sampling_rate)
-
-        logger.info(f"Audio file saved as {output_path}")
         
         # Clean up temporary video file
         tmp_video_path.unlink()
