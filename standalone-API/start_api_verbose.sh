@@ -1,7 +1,7 @@
 #!/bin/bash
 # Persistent API Startup Script with Logging
 
-cd /workspace/model-tests/repos/thesis-pt-v2a/standalone-API
+cd /workspace/thesis-pt-v2a/standalone-API
 
 # Create logs directory
 mkdir -p logs
