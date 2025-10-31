@@ -113,6 +113,12 @@ Examples:
         help='Use system temp directory for output (useful when called from Pro Tools)'
     )
     
+    parser.add_argument(
+        '--import-to-protools',
+        action='store_true',
+        help='Automatically import generated audio to Pro Tools timeline via PTSL'
+    )
+    
     # Advanced parameters
     parser.add_argument(
         '--duration', '-d',
@@ -366,6 +372,7 @@ def generate_audio(
             # Auto-generate output filename
             output_dir = create_output_directory(use_temp=use_temp)
             timestamp = int(time.time())
+            # MMAudio API returns FLAC - saved as FLAC, converted to WAV by PTSL client if needed
             output_filename = f"generated_audio_{timestamp}_{seed}.flac"
             final_output_path = output_dir / output_filename
 
@@ -489,6 +496,39 @@ def main():
         )
         
         if output_file:
+            # Import to Pro Tools if requested
+            if args.import_to_protools:
+                if not quiet:
+                    print(f"\n📥 Importing to Pro Tools timeline...")
+                
+                try:
+                    # Import PTSL client
+                    import sys
+                    from pathlib import Path
+                    ptsl_path = Path(__file__).parent / "ptsl_integration"
+                    if ptsl_path.exists():
+                        sys.path.insert(0, str(ptsl_path))
+                        from ptsl_client import import_audio_to_pro_tools
+                        
+                        success = import_audio_to_pro_tools(
+                            audio_path=output_file,
+                            location="SessionStart"
+                        )
+                        
+                        if success:
+                            if not quiet:
+                                print(f"✅ Audio imported to Pro Tools timeline!")
+                        else:
+                            if not quiet:
+                                print(f"⚠️  PTSL import failed - audio file saved but not imported")
+                    else:
+                        if not quiet:
+                            print(f"⚠️  PTSL integration not found - audio saved but not imported")
+                except Exception as e:
+                    if not quiet:
+                        print(f"⚠️  PTSL import failed: {e}")
+                        print(f"   Audio file saved at: {output_file}")
+            
             if quiet:
                 # Pro Tools integration: just print the output path
                 print(output_file)

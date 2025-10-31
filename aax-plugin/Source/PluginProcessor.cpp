@@ -304,8 +304,9 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     args.add ("--seed");
     args.add (juce::String (seed));
     
-    args.add ("--temp");   // Use temp directory for Pro Tools compatibility
-    args.add ("--quiet");  // Minimal output for parsing
+    args.add ("--temp");               // Use temp directory for Pro Tools compatibility
+    args.add ("--import-to-protools"); // Auto-import to timeline via PTSL
+    args.add ("--quiet");              // Minimal output for parsing
     
     // Build command string
     juce::String command;
