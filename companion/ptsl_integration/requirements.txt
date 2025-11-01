@@ -1,4 +1,11 @@
+# PTSL Integration Requirements (py-ptsl based)
+# Install with: pip install -r requirements_v2.txt
+
+# Core dependencies
 grpcio>=1.76.0
-grpcio-tools>=1.76.0
 protobuf>=6.33.0
 soundfile>=0.12.1
+
+# py-ptsl will be installed separately in editable mode from ../external/py-ptsl pip install -e .
+
+# See setup_v2.ps1 for automated setup

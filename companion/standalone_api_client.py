@@ -502,28 +502,20 @@ def main():
                     print(f"\n📥 Importing to Pro Tools timeline...")
                 
                 try:
-                    # Import PTSL client
-                    import sys
-                    from pathlib import Path
-                    ptsl_path = Path(__file__).parent / "ptsl_integration"
-                    if ptsl_path.exists():
-                        sys.path.insert(0, str(ptsl_path))
-                        from ptsl_client import import_audio_to_pro_tools
-                        
-                        success = import_audio_to_pro_tools(
-                            audio_path=output_file,
-                            location="SessionStart"
-                        )
-                        
-                        if success:
-                            if not quiet:
-                                print(f"✅ Audio imported to Pro Tools timeline!")
-                        else:
-                            if not quiet:
-                                print(f"⚠️  PTSL import failed - audio file saved but not imported")
+                    # Import PTSL client (now using py-ptsl based implementation)
+                    from ptsl_integration import import_audio_to_pro_tools
+                    
+                    success = import_audio_to_pro_tools(
+                        audio_path=output_file,
+                        location="SessionStart"
+                    )
+                    
+                    if success:
+                        if not quiet:
+                            print(f"✅ Audio imported to Pro Tools timeline!")
                     else:
                         if not quiet:
-                            print(f"⚠️  PTSL integration not found - audio saved but not imported")
+                            print(f"⚠️  PTSL import failed - audio file saved but not imported")
                 except Exception as e:
                     if not quiet:
                         print(f"⚠️  PTSL import failed: {e}")

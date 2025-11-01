@@ -1,6 +1,8 @@
 """
 End-to-End Test: Audio Generation + PTSL Import
 Tests the complete workflow from video to Pro Tools timeline
+
+Now using py-ptsl library for cleaner, more maintainable code.
 """
 
 import sys
@@ -9,64 +11,70 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ptsl_integration.ptsl_client import PTSLClient
+from ptsl_integration import import_audio_to_pro_tools
 
 def test_full_workflow():
     """Test complete workflow: Generate audio and import to Pro Tools"""
     
     print("="*60)
-    print("PTSL Integration Test")
+    print("PTSL Integration Test (py-ptsl)")
     print("="*60)
     
-    # Step 1: Connect to Pro Tools
-    print("\n1. Connecting to Pro Tools PTSL...")
-    client = PTSLClient()
+    # Step 1: Find test audio file
+    print("\n1. Looking for test audio file...")
     
-    if not client.connect():
-        print("❌ Failed to connect to Pro Tools")
-        print("\nMake sure:")
-        print("  - Pro Tools is running")
-        print("  - PTSL is enabled (Setup > Preferences > MIDI)")
-        print("  - A session is open")
-        return False
+    # Try multiple possible locations for test audio
+    test_locations = [
+        Path("C:/Users/LUDENB~1/AppData/Local/Temp/pt_v2a_outputs"),
+        Path(__file__).parent.parent / "test-data",
+        Path(__file__).parent / "test-data"
+    ]
     
-    print("✅ Connected successfully!")
-    
-    # Step 2: Test with a dummy audio file (for now)
-    print("\n2. Testing audio import...")
-    
-    # Use a test audio file from temp directory if available
-    test_audio = Path("C:/Users/LUDENB~1/AppData/Local/Temp/pt_v2a_outputs").glob("*.flac")
-    test_audio_file = next(test_audio, None)
+    test_audio_file = None
+    for location in test_locations:
+        if location.exists():
+            # Try FLAC first, then WAV
+            for pattern in ["*.flac", "*.wav"]:
+                files = list(location.glob(pattern))
+                if files:
+                    test_audio_file = files[0]
+                    break
+        if test_audio_file:
+            break
     
     if not test_audio_file:
-        print("⚠️  No test audio file found in temp directory")
-        print("   Run the plugin to generate audio first, or provide a test file")
-        client.disconnect()
+        print("⚠️  No test audio file found")
+        print("   Searched locations:")
+        for loc in test_locations:
+            print(f"     - {loc}")
+        print("\n   Run the plugin or standalone API client to generate audio first")
         return False
     
-    print(f"   Using: {test_audio_file}")
+    print(f"✅ Found: {test_audio_file}")
     
-    result = client.import_audio_to_timeline(
-        audio_file_path=str(test_audio_file),
-        location="SessionStart",
-        destination="NewTrack"
+    # Step 2: Import to Pro Tools using py-ptsl
+    print("\n2. Importing to Pro Tools via py-ptsl...")
+    print(f"   File: {test_audio_file}")
+    print(f"   Location: SessionStart (sample 0)")
+    
+    success = import_audio_to_pro_tools(
+        audio_path=str(test_audio_file),
+        location="SessionStart"
     )
     
-    if result:
-        print(f"✅ {result}")
-    else:
+    if not success:
         print("❌ Import failed")
-        client.disconnect()
+        print("\nMake sure:")
+        print("  - Pro Tools is running")
+        print("  - PTSL is enabled (Setup > Preferences > MIDI > Enable PTSL)")
+        print("  - A session is open in Pro Tools")
+        print("  - py-ptsl is installed (pip install -e ../../external/py-ptsl)")
         return False
-    
-    # Step 3: Cleanup
-    print("\n3. Disconnecting...")
-    client.disconnect()
     
     print("\n" + "="*60)
     print("✅ All tests passed!")
     print("="*60)
+    print("\npy-ptsl integration working correctly!")
     return True
 
 
