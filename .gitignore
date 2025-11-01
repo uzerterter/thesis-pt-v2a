@@ -125,6 +125,12 @@ yarn-error.log*
 *.aif
 *.aiff
 
+# Video files (unless specifically needed)
+*.mp4
+*.avi
+*.mov
+*.mkv
+
 # Log files
 *_log.txt
 
