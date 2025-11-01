@@ -45,5 +45,59 @@ target_link_libraries(pt_v2a PRIVATE
     juce::juce_gui_extra
 )
 
+# ==============================================================================
+# Python Scripts Integration
+# ==============================================================================
+# Copy Python scripts from companion/ to Resources/ at build time
+# This keeps Resources/ synchronized with the originals automatically
+#
+# NOTE: During development, you can use symlinks instead:
+#   cd Resources/python/Scripts
+#   mklink standalone_api_client.py ..\..\..\..\companion\standalone_api_client.py
+#   cd Resources
+#   mklink /D ptsl_integration ..\..\companion\ptsl_integration
+#
+# CMake will skip copying if symlinks exist and point to the same content.
+# For production builds, delete symlinks and CMake will copy real files.
+
+set(COMPANION_DIR ${CMAKE_SOURCE_DIR}/../companion)
+set(RESOURCES_DIR ${CMAKE_SOURCE_DIR}/Resources)
+set(RESOURCES_PYTHON_SCRIPTS ${CMAKE_SOURCE_DIR}/Resources/python/Scripts)
+
+# Copy standalone_api_client.py to embedded Python Scripts directory
+add_custom_command(
+    TARGET pt_v2a POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${COMPANION_DIR}/standalone_api_client.py
+        ${RESOURCES_PYTHON_SCRIPTS}/standalone_api_client.py
+    COMMENT "Syncing standalone_api_client.py to embedded Python Scripts/"
+)
+
+# Copy ptsl_integration package to embedded Python site-packages
+# This makes the plugin completely self-contained
+add_custom_command(
+    TARGET pt_v2a POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${COMPANION_DIR}/ptsl_integration
+        ${CMAKE_SOURCE_DIR}/Resources/python/Lib/site-packages/ptsl_integration
+    COMMENT "Syncing ptsl_integration/ to embedded Python site-packages/"
+)
+
+# Monitor source files for changes (CMake will reconfigure if they change)
+file(GLOB_RECURSE COMPANION_SOURCES 
+    CONFIGURE_DEPENDS
+    ${COMPANION_DIR}/*.py
+)
+
+# ==============================================================================
+# Embedded Python Integration
+# ==============================================================================
+# Copy Resources/python/ to plugin bundle at build time
+# Note: JUCE's juce_add_plugin already handles copying Resources/ for AAX format
+# The Resources/ folder structure should match:
+#   Resources/python/python.exe
+#   Resources/python/Lib/site-packages/
+#   Resources/python/Scripts/
+
 # Post-build: copy .aaxplugin into Avid folder (requires admin permissions)
 # Note: This will be done manually for testing

@@ -29,6 +29,11 @@ JuceLibraryCode/
 pt_v2a_artefacts/
 juce_build/
 
+# Embedded Python (too large for Git, set up locally)
+aax-plugin/Resources/python/
+# Exception: Keep setup documentation
+!aax-plugin/Resources/python/README.md
+
 # Compiled binaries
 *.exe
 *.dll

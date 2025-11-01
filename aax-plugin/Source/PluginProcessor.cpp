@@ -47,53 +47,41 @@ void PtV2AProcessor::setStateInformation (const void* data, int sizeInBytes)
 
 juce::String PtV2AProcessor::getPythonExecutable()
 {
-    // Try to find Python 3 executable
-    // Priority: python3 > python (if version 3.x)
+    // Use embedded Python bundled with the plugin
+    // This makes the plugin completely self-contained with all dependencies
     
-#if JUCE_MAC
-    // macOS: Try common locations
-    juce::StringArray pythonCandidates = {
-        "/usr/bin/python3",
-        "/usr/local/bin/python3",
-        "/opt/homebrew/bin/python3",
-        "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
-        "python3"  // System PATH
-    };
-#elif JUCE_WINDOWS
-    // Windows: Try common locations
-    juce::StringArray pythonCandidates = {
-        "python",      // Usually Python 3 on modern Windows
-        "python3",
-        "py -3"        // Python Launcher
-    };
-#else
-    juce::StringArray pythonCandidates = { "python3", "python" };
-#endif
-
-    // Test each candidate
-    for (const auto& candidate : pythonCandidates)
+    // Get plugin binary location
+    auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+    auto pluginDir = pluginFile.getParentDirectory();
+    
+    DBG ("=== Python Executable Search ===");
+    DBG ("Plugin directory: " + pluginDir.getFullPathName());
+    
+    // Path to embedded Python in plugin Resources
+    auto embeddedPythonExe = pluginDir.getChildFile("Resources")
+                                      .getChildFile("python")
+                                      .getChildFile("python.exe");
+    
+    DBG ("Checking embedded Python: " + embeddedPythonExe.getFullPathName());
+    
+    if (embeddedPythonExe.existsAsFile())
     {
-        juce::ChildProcess testProcess;
-        if (testProcess.start (candidate + " --version"))
-        {
-            juce::String output = testProcess.readAllProcessOutput().trim();
-            if (output.contains ("Python 3."))
-            {
-                DBG ("Found Python: " + candidate + " (" + output + ")");
-                return candidate;
-            }
-        }
+        DBG ("✓ Using embedded Python from plugin Resources");
+        return embeddedPythonExe.getFullPathName();
     }
     
-    DBG ("ERROR: No Python 3 executable found!");
-    return "python3";  // Fallback
+    DBG ("⚠ Embedded Python not found!");
+    DBG ("Expected at: " + embeddedPythonExe.getFullPathName());
+    DBG ("Make sure Resources/python/ is copied to the plugin bundle");
+    
+    // Fallback: Try system Python (will likely fail without dependencies)
+    return "python.exe";
 }
 
 juce::File PtV2AProcessor::getAPIClientScript()
 {
-    // Path to standalone_api_client.py relative to plugin
-    // Assumes plugin is in: aax-plugin/
-    // Script is in: companion/standalone_api_client.py
+    // For embedded Python: Script is bundled in plugin Resources/python/Scripts/
+    // This makes the plugin self-contained and portable
     
     // Get plugin binary location
     auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
@@ -101,7 +89,23 @@ juce::File PtV2AProcessor::getAPIClientScript()
     
     DBG ("Plugin directory: " + pluginDir.getFullPathName());
     
-    // Navigate to thesis-pt-v2a root based on platform-specific build structure
+    // Try embedded script first (production/installed builds)
+    auto embeddedScript = pluginDir.getChildFile("Resources")
+                                   .getChildFile("python")
+                                   .getChildFile("Scripts")
+                                   .getChildFile("standalone_api_client.py");
+    
+    DBG ("Checking embedded script: " + embeddedScript.getFullPathName());
+    
+    if (embeddedScript.existsAsFile())
+    {
+        DBG ("✓ Using embedded script from plugin Resources");
+        return embeddedScript;
+    }
+    
+    DBG ("⚠ Embedded script not found, trying external paths (development fallback)");
+    
+    // Fallback: External companion directory (for development builds)
     juce::File thesisRoot;
     
 #if JUCE_WINDOWS
@@ -109,7 +113,6 @@ juce::File PtV2AProcessor::getAPIClientScript()
     // From: build/pt_v2a_artefacts/Debug/AAX/pt_v2a.aaxplugin/Contents/x64/pt_v2a.aaxplugin
     // To:   thesis-pt-v2a/companion/standalone_api_client.py
     
-    // Try different navigation paths for different build locations
     auto candidate1 = pluginDir.getParentDirectory()      // x64
                                 .getParentDirectory()      // Contents
                                 .getParentDirectory()      // pt_v2a.aaxplugin
@@ -127,26 +130,15 @@ juce::File PtV2AProcessor::getAPIClientScript()
                                 .getParentDirectory()      // build
                                 .getParentDirectory();     // thesis-pt-v2a
     
-    // Also try from installed location
-    auto candidate3 = pluginDir.getParentDirectory()      // Contents
-                                .getParentDirectory()      // pt_v2a.aaxplugin
-                                .getParentDirectory()      // Plug-Ins
-                                .getParentDirectory()      // Audio
-                                .getParentDirectory();     // May vary
-    
     if (candidate1.getChildFile("companion").exists())
         thesisRoot = candidate1;
     else if (candidate2.getChildFile("companion").exists())
         thesisRoot = candidate2;
-    else if (candidate3.getChildFile("companion").exists())
-        thesisRoot = candidate3;
     else
-        thesisRoot = candidate1;  // Fallback to first candidate
+        thesisRoot = candidate1;  // Fallback
         
 #elif JUCE_MAC
-    // macOS AAX build structure:
-    // From: aax-plugin/Builds/MacOSX/build/Debug/pt_v2a.aaxplugin/Contents/MacOS/pt_v2a
-    // To:   thesis-pt-v2a/companion/standalone_api_client.py
+    // macOS AAX build structure
     thesisRoot = pluginDir.getParentDirectory()  // Contents
                           .getParentDirectory()  // pt_v2a.aaxplugin
                           .getParentDirectory()  // Debug
@@ -170,13 +162,13 @@ juce::File PtV2AProcessor::getAPIClientScript()
     
     if (scriptPath.existsAsFile())
     {
-        DBG ("Found API client script: " + scriptPath.getFullPathName());
+        DBG ("Found API client script (external): " + scriptPath.getFullPathName());
         return scriptPath;
     }
     
     DBG ("Script not found at: " + scriptPath.getFullPathName());
     
-    // Fallback: Try relative to current working directory
+    // Last resort: Try relative to current working directory
     auto cwdScript = juce::File::getCurrentWorkingDirectory()
                          .getChildFile ("companion")
                          .getChildFile ("standalone_api_client.py");
@@ -281,10 +273,15 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
         return {};
     }
     
-    // Build command line
-    // Format: python3 standalone_api_client.py --video <path> --prompt <text> --quiet
+    // Get script directory (for working directory)
+    juce::File scriptDir = scriptFile.getParentDirectory();
+    juce::String scriptPath = scriptDir.getFullPathName();
+    
+    DBG ("Script directory: " + scriptPath);
+    
+    // Build command line arguments
     juce::StringArray args;
-    args.add (pythonExe);
+    
     args.add (scriptFile.getFullPathName());
     args.add ("--video");
     args.add (videoFile.getFullPathName());
@@ -308,23 +305,47 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     args.add ("--import-to-protools"); // Auto-import to timeline via PTSL
     args.add ("--quiet");              // Minimal output for parsing
     
-    // Build command string
+    // Build command - simple and clean!
+    // Embedded Python has everything: py-ptsl in site-packages, ptsl_integration in site-packages
+    // No PYTHONPATH needed - the plugin is completely self-contained
     juce::String command;
-    for (int i = 0; i < args.size(); ++i)
+    
+#if JUCE_WINDOWS
+    // Windows: Just cd to script directory and run
+    command = "cmd /c \"";
+    command += "cd /d \"" + scriptPath + "\" && ";  // Change to script directory
+    command += "\"" + pythonExe + "\" ";            // Embedded Python executable
+    command += "\"" + scriptFile.getFileName() + "\"";  // Script (we're in the right dir)
+#else
+    // macOS/Linux: Same simple approach
+    command = "cd \"" + scriptPath + "\" && ";
+    command += "\"" + pythonExe + "\" ";
+    command += "\"" + scriptFile.getFileName() + "\"";
+#endif
+    
+    // Add arguments (skip first arg which is the script path)
+    for (int i = 1; i < args.size(); ++i)
     {
+        command += " ";
         // Quote arguments with spaces
         if (args[i].containsChar (' '))
             command += "\"" + args[i] + "\"";
         else
             command += args[i];
-        
-        if (i < args.size() - 1)
-            command += " ";
     }
+    
+#if JUCE_WINDOWS
+    command += "\"";  // Close cmd /c quote
+#endif
     
     DBG ("Executing command: " + command);
     
-    // Execute subprocess - simple approach without file redirection
+    // Execute subprocess in BACKGROUND (non-blocking)
+    // This is CRITICAL: If we wait for the Python process to finish, Pro Tools freezes
+    // and PTSL cannot respond, causing a deadlock/crash!
+    //
+    // Instead: Start Python process and return immediately.
+    // The Python script will handle everything (MMAudio API + PTSL import)
     juce::ChildProcess apiProcess;
     if (!apiProcess.start (command))
     {
@@ -335,69 +356,24 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
         return {};
     }
     
-    // Wait for process to complete (with timeout)
-    // MMAudio generation typically takes 60-120 seconds
-    const int timeoutMs = 300000;  // 5 minutes
-    bool completed = apiProcess.waitForProcessToFinish (timeoutMs);
+    DBG ("✓ Python process started successfully (running in background)");
+    DBG ("   The script will generate audio and import to Pro Tools automatically.");
+    DBG ("   Check Pro Tools timeline in ~60-120 seconds for the imported audio.");
     
-    if (!completed)
-    {
-        apiProcess.kill();
-        juce::String error = "API request timed out after " + juce::String (timeoutMs / 1000) + " seconds";
-        DBG ("ERROR: " + error);
-        if (errorMessage != nullptr)
-            *errorMessage = error;
-        return {};
-    }
+    // Return success message immediately
+    // Note: We don't know the output path yet, but the script will handle it
+    juce::String successMessage = "Audio generation started in background.\n\n";
+    successMessage += "The process will:\n";
+    successMessage += "1. Generate audio via MMAudio API (~60s)\n";
+    successMessage += "2. Import audio to Pro Tools timeline via PTSL\n\n";
+    successMessage += "Check your Pro Tools timeline in 1-2 minutes.";
     
-    // Read stdout only (stderr will be lost, but safer for Pro Tools)
-    juce::String output = apiProcess.readAllProcessOutput().trim();
+    if (errorMessage != nullptr)
+        *errorMessage = "";  // Clear any previous error
     
-    DBG ("API client output: " + output);
-    
-    // Check exit code
-    int exitCode = apiProcess.getExitCode();
-    if (exitCode != 0)
-    {
-        // Python script failed - output contains error message
-        juce::String error = "API client failed with exit code " + juce::String (exitCode);
-        
-        if (output.isNotEmpty())
-        {
-            error += "\n\n" + output;
-        }
-        else
-        {
-            error += "\n\nNo error message from script. Check:\n";
-            error += "1. Python is installed and in PATH\n";
-            error += "2. API server is running on localhost:8000\n";
-            error += "3. Video file exists and is accessible\n";
-            error += "4. Required Python packages are installed";
-        }
-        
-        DBG ("ERROR: " + error);
-        if (errorMessage != nullptr)
-            *errorMessage = error;
-        return {};
-    }
-    
-    // Parse output path (in quiet mode, it's just the file path)
-    juce::File outputFile (output);
-    
-    if (!outputFile.existsAsFile())
-    {
-        juce::String error = "Generated audio file not found: " + output;
-        DBG ("ERROR: " + error);
-        if (errorMessage != nullptr)
-            *errorMessage = error;
-        return {};
-    }
-    
-    DBG ("=== Generation Successful ===");
-    DBG ("Output file: " + outputFile.getFullPathName());
-    DBG ("File size: " + juce::String (outputFile.getSize() / 1024) + " KB");
-    
-    return outputFile.getFullPathName();
+    // Return placeholder path (actual path will be in temp folder)
+    // The Python script handles everything, so we just return success
+    return "background_generation_in_progress";
 }
 
 // This creates new instances of the plugin
