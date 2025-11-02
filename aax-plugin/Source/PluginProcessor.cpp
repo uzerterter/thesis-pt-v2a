@@ -70,30 +70,70 @@ juce::String PtV2AProcessor::getPythonExecutable()
     
     // Get plugin binary location
     auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    auto pluginDir = pluginFile.getParentDirectory();
+    auto pluginDir = pluginFile.getParentDirectory(); // This is x64/ directory
     
-    DBG ("=== Python Executable Search ===");
-    DBG ("Plugin directory: " + pluginDir.getFullPathName());
+    // Go up to Contents/ directory, then find Resources/
+    // Structure: PTV2A.aaxplugin/Contents/x64/PTV2A.aaxplugin (binary)
+    //                                    /Resources/python/python.exe
+    auto contentsDir = pluginDir.getParentDirectory(); // Go from x64/ to Contents/
     
-    // Path to embedded Python in plugin Resources
-    auto embeddedPythonExe = pluginDir.getChildFile("Resources")
-                                      .getChildFile("python")
-                                      .getChildFile("python.exe");
+    juce::Logger::writeToLog ("=== Python Executable Search ===");
+    juce::Logger::writeToLog ("Plugin binary directory: " + pluginDir.getFullPathName());
+    juce::Logger::writeToLog ("Plugin Contents directory: " + contentsDir.getFullPathName());
     
-    DBG ("Checking embedded Python: " + embeddedPythonExe.getFullPathName());
+    // Platform-specific Python executable name and location
+#if JUCE_WINDOWS
+    // Windows: python.exe in Contents/Resources/python/
+    auto embeddedPythonExe = contentsDir.getChildFile("Resources")
+                                        .getChildFile("python")
+                                        .getChildFile("python.exe");
+#elif JUCE_MAC
+    // macOS: python3 or python in Contents/Resources/python/ or Contents/Resources/python/bin/
+    auto embeddedPythonExe = contentsDir.getChildFile("Resources")
+                                        .getChildFile("python")
+                                        .getChildFile("python3");
+    
+    // If python3 not found, try python
+    if (!embeddedPythonExe.existsAsFile())
+        embeddedPythonExe = contentsDir.getChildFile("Resources")
+                                       .getChildFile("python")
+                                       .getChildFile("python");
+    
+    // Some Python distributions put binary in bin/ subdirectory
+    if (!embeddedPythonExe.existsAsFile())
+        embeddedPythonExe = contentsDir.getChildFile("Resources")
+                                       .getChildFile("python")
+                                       .getChildFile("bin")
+                                       .getChildFile("python3");
+#else
+    // Linux: python3 in Contents/Resources/python/
+    auto embeddedPythonExe = contentsDir.getChildFile("Resources")
+                                        .getChildFile("python")
+                                        .getChildFile("python3");
+#endif
+    
+    juce::Logger::writeToLog ("Checking embedded Python: " + embeddedPythonExe.getFullPathName());
     
     if (embeddedPythonExe.existsAsFile())
     {
-        DBG ("✓ Using embedded Python from plugin Resources");
+        juce::Logger::writeToLog ("✓ Using embedded Python from plugin Resources");
+        juce::Logger::writeToLog ("Python path: " + embeddedPythonExe.getFullPathName());
         return embeddedPythonExe.getFullPathName();
     }
     
-    DBG ("⚠ Embedded Python not found!");
-    DBG ("Expected at: " + embeddedPythonExe.getFullPathName());
-    DBG ("Make sure Resources/python/ is copied to the plugin bundle");
+    juce::Logger::writeToLog ("⚠ Embedded Python not found!");
+    juce::Logger::writeToLog ("Expected at: " + embeddedPythonExe.getFullPathName());
+    juce::Logger::writeToLog ("Make sure Resources/python/ is copied to the plugin bundle");
+    juce::Logger::writeToLog ("⚠ Falling back to system Python");
     
     // Fallback: Try system Python (will likely fail without dependencies)
+#if JUCE_WINDOWS
+    juce::Logger::writeToLog ("Using system Python: python.exe");
     return "python.exe";
+#else
+    juce::Logger::writeToLog ("Using system Python: python3");
+    return "python3";
+#endif
 }
 
 juce::File PtV2AProcessor::getAPIClientScript()
@@ -103,25 +143,30 @@ juce::File PtV2AProcessor::getAPIClientScript()
     
     // Get plugin binary location
     auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    auto pluginDir = pluginFile.getParentDirectory();
+    auto pluginDir = pluginFile.getParentDirectory(); // This is x64/ directory
     
-    DBG ("Plugin directory: " + pluginDir.getFullPathName());
+    // Go up to Contents/ directory
+    auto contentsDir = pluginDir.getParentDirectory(); // Go from x64/ to Contents/
+    
+    juce::Logger::writeToLog ("=== API Client Script Search ===");
     
     // Try embedded script first (production/installed builds)
-    auto embeddedScript = pluginDir.getChildFile("Resources")
-                                   .getChildFile("python")
-                                   .getChildFile("Scripts")
-                                   .getChildFile("standalone_api_client.py");
+    // Structure: PTV2A.aaxplugin/Contents/Resources/python/Scripts/standalone_api_client.py
+    auto embeddedScript = contentsDir.getChildFile("Resources")
+                                     .getChildFile("python")
+                                     .getChildFile("Scripts")
+                                     .getChildFile("standalone_api_client.py");
     
-    DBG ("Checking embedded script: " + embeddedScript.getFullPathName());
+    juce::Logger::writeToLog ("Checking embedded script: " + embeddedScript.getFullPathName());
     
     if (embeddedScript.existsAsFile())
     {
-        DBG ("✓ Using embedded script from plugin Resources");
+        juce::Logger::writeToLog ("✓ Using embedded script from plugin Resources");
+        juce::Logger::writeToLog ("Script path: " + embeddedScript.getFullPathName());
         return embeddedScript;
     }
     
-    DBG ("⚠ Embedded script not found, trying external paths (development fallback)");
+    juce::Logger::writeToLog ("⚠ Embedded script not found, trying external paths (development fallback)");
     
     // Fallback: External companion directory (for development builds)
     juce::File thesisRoot;
@@ -173,18 +218,18 @@ juce::File PtV2AProcessor::getAPIClientScript()
                           .getParentDirectory();
 #endif
     
-    DBG ("Thesis root candidate: " + thesisRoot.getFullPathName());
+    juce::Logger::writeToLog ("Thesis root candidate: " + thesisRoot.getFullPathName());
     
     auto scriptPath = thesisRoot.getChildFile ("companion")
                                  .getChildFile ("standalone_api_client.py");
     
     if (scriptPath.existsAsFile())
     {
-        DBG ("Found API client script (external): " + scriptPath.getFullPathName());
+        juce::Logger::writeToLog ("✓ Found API client script (external/development): " + scriptPath.getFullPathName());
         return scriptPath;
     }
     
-    DBG ("Script not found at: " + scriptPath.getFullPathName());
+    juce::Logger::writeToLog ("Script not found at: " + scriptPath.getFullPathName());
     
     // Last resort: Try relative to current working directory
     auto cwdScript = juce::File::getCurrentWorkingDirectory()
@@ -193,11 +238,11 @@ juce::File PtV2AProcessor::getAPIClientScript()
     
     if (cwdScript.existsAsFile())
     {
-        DBG ("Found API client script in CWD: " + cwdScript.getFullPathName());
+        juce::Logger::writeToLog ("✓ Found API client script in CWD: " + cwdScript.getFullPathName());
         return cwdScript;
     }
     
-    DBG ("Script not found at CWD: " + cwdScript.getFullPathName());
+    juce::Logger::writeToLog ("Script not found at CWD: " + cwdScript.getFullPathName());
     
 #if JUCE_WINDOWS
     // Windows-specific fallback: Try known absolute paths
@@ -211,15 +256,15 @@ juce::File PtV2AProcessor::getAPIClientScript()
         juce::File fallbackFile (path);
         if (fallbackFile.existsAsFile())
         {
-            DBG ("Found API client script via fallback: " + fallbackFile.getFullPathName());
+            juce::Logger::writeToLog ("✓ Found API client script via fallback: " + fallbackFile.getFullPathName());
             return fallbackFile;
         }
-        DBG ("Script not found at fallback: " + path);
+        juce::Logger::writeToLog ("Script not found at fallback: " + path);
     }
 #endif
     
-    DBG ("ERROR: API client script not found in any location!");
-    DBG ("Current working directory: " + juce::File::getCurrentWorkingDirectory().getFullPathName());
+    juce::Logger::writeToLog ("❌ ERROR: API client script not found in any location!");
+    juce::Logger::writeToLog ("Current working directory: " + juce::File::getCurrentWorkingDirectory().getFullPathName());
     return juce::File();
 }
 
@@ -241,12 +286,12 @@ bool PtV2AProcessor::isAPIAvailable (const juce::String& apiUrl)
         // Check if response contains expected API identifier
         if (response.contains ("MMAudio") || response.contains ("status"))
         {
-            DBG ("API is available at: " + apiUrl);
+            juce::Logger::writeToLog ("API is available at: " + apiUrl);
             return true;
         }
     }
     
-    DBG ("API not available at: " + apiUrl);
+    juce::Logger::writeToLog ("API not available at: " + apiUrl);
     return false;
 }
 
@@ -257,17 +302,17 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     int seed,
     juce::String* errorMessage)
 {
-    DBG ("=== MMAudio Generation Started ===");
-    DBG ("Video: " + videoFile.getFullPathName());
-    DBG ("Prompt: " + prompt);
-    DBG ("Negative Prompt: " + negativePrompt);
-    DBG ("Seed: " + juce::String (seed));
+    juce::Logger::writeToLog ("=== MMAudio Generation Started ===");
+    juce::Logger::writeToLog ("Video: " + videoFile.getFullPathName());
+    juce::Logger::writeToLog ("Prompt: " + prompt);
+    juce::Logger::writeToLog ("Negative Prompt: " + negativePrompt);
+    juce::Logger::writeToLog ("Seed: " + juce::String (seed));
     
     // Validate inputs
     if (!videoFile.existsAsFile())
     {
         juce::String error = "Video file does not exist: " + videoFile.getFullPathName();
-        DBG ("ERROR: " + error);
+        juce::Logger::writeToLog ("ERROR: " + error);
         if (errorMessage != nullptr)
             *errorMessage = error;
         return {};
@@ -281,11 +326,8 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     if (!scriptFile.existsAsFile())
     {
         juce::String error = "API client script not found.\n\n";
-        error += "Please check the Pro Tools console for detailed search paths.\n\n";
-        error += "Expected location:\n";
-        error += "C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\thesis-pt-v2a\\companion\\standalone_api_client.py";
         
-        DBG ("ERROR: " + error);
+        juce::Logger::writeToLog ("ERROR: " + error);
         if (errorMessage != nullptr)
             *errorMessage = error;
         return {};
@@ -295,7 +337,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     juce::File scriptDir = scriptFile.getParentDirectory();
     juce::String scriptPath = scriptDir.getFullPathName();
     
-    DBG ("Script directory: " + scriptPath);
+    juce::Logger::writeToLog ("Script directory: " + scriptPath);
     
     // Build command line arguments
     juce::StringArray args;
@@ -356,7 +398,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     command += "\"";  // Close cmd /c quote
 #endif
     
-    DBG ("Executing command: " + command);
+    juce::Logger::writeToLog ("Executing command: " + command);
     
     // Execute subprocess in BACKGROUND (non-blocking)
     // This is CRITICAL: If we wait for the Python process to finish, Pro Tools freezes
@@ -368,15 +410,15 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     if (!apiProcess.start (command))
     {
         juce::String error = "Failed to start API client process";
-        DBG ("ERROR: " + error);
+        juce::Logger::writeToLog ("ERROR: " + error);
         if (errorMessage != nullptr)
             *errorMessage = error;
         return {};
     }
     
-    DBG ("✓ Python process started successfully (running in background)");
-    DBG ("   The script will generate audio and import to Pro Tools automatically.");
-    DBG ("   Check Pro Tools timeline in ~60-120 seconds for the imported audio.");
+    juce::Logger::writeToLog ("✓ Python process started successfully (running in background)");
+    juce::Logger::writeToLog ("   The script will generate audio and import to Pro Tools automatically.");
+    juce::Logger::writeToLog ("   Check Pro Tools timeline in ~60-120 seconds for the imported audio.");
     
     // Return success message immediately
     // Note: We don't know the output path yet, but the script will handle it
@@ -416,8 +458,8 @@ bool PtV2AProcessor::initializeLogger()
         auto result = logDir.createDirectory();
         if (result.failed())
         {
-            // Can't create directory - logging will fail
-            DBG ("Failed to create log directory: " + result.getErrorMessage());
+            // Can't create directory - logging will fail (use console as fallback)
+            std::cerr << "Failed to create log directory: " << result.getErrorMessage() << std::endl;
             return false;
         }
     }
@@ -442,7 +484,7 @@ bool PtV2AProcessor::initializeLogger()
     }
     
     if (deletedCount > 0)
-        DBG ("Cleaned up " + juce::String(deletedCount) + " old log files");
+        std::cout << "Cleaned up " << deletedCount << " old log files" << std::endl;
     
     // Create log file: PTV2A.log
     auto logFile = logDir.getChildFile ("PTV2A.log");
@@ -475,6 +517,444 @@ juce::File PtV2AProcessor::getLogFile()
     
     // Get log file path from logger
     return fileLogger->getLogFile();
+}
+
+//==============================================================================
+// Phase 3B: Timeline Selection & Video Trimming Implementation
+//==============================================================================
+
+bool PtV2AProcessor::isFFmpegAvailable()
+{
+    juce::Logger::writeToLog ("=== Checking FFmpeg Availability ===");
+    
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: API client script not found: " + scriptFile.getFullPathName());
+        return false;
+    }
+    
+    // Build command: python standalone_api_client.py --action check_ffmpeg
+    juce::String command = "\"" + pythonExe + "\" ";
+    command += "\"" + scriptFile.getFullPathName() + "\" ";
+    command += "--action check_ffmpeg";
+    
+    juce::Logger::writeToLog ("Executing FFmpeg check command...");
+    juce::Logger::writeToLog ("Command: " + command);
+    
+    // Create child process
+    juce::ChildProcess process;
+    
+    if (!process.start (command))
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start Python process");
+        return false;
+    }
+    
+    // Wait for completion (should be fast, <1 second)
+    if (!process.waitForProcessToFinish (5000))  // 5 second timeout
+    {
+        juce::Logger::writeToLog ("ERROR: FFmpeg check timed out");
+        process.kill();
+        return false;
+    }
+    
+    // Read output
+    auto output = process.readAllProcessOutput().trim();
+    juce::Logger::writeToLog ("Python output: " + output);
+    
+    // Parse JSON response
+    auto json = juce::JSON::parse (output);
+    if (auto* obj = json.getDynamicObject())
+    {
+        bool available = obj->getProperty ("available");
+        auto version = obj->getProperty ("version").toString();
+        auto source = obj->getProperty ("source").toString();
+        auto error = obj->getProperty ("error").toString();
+        
+        if (available)
+        {
+            juce::Logger::writeToLog ("=== FFmpeg Check SUCCESS ===");
+            juce::Logger::writeToLog ("Version: " + version);
+            juce::Logger::writeToLog ("Source: " + source);
+            return true;
+        }
+        else
+        {
+            juce::Logger::writeToLog ("=== FFmpeg Check FAILED ===");
+            juce::Logger::writeToLog ("ERROR: " + error);
+            return false;
+        }
+    }
+    
+    juce::Logger::writeToLog ("ERROR: Failed to parse FFmpeg check response");
+    juce::Logger::writeToLog ("Raw output was: " + output);
+    return false;
+}
+
+PtV2AProcessor::VideoSelectionInfo PtV2AProcessor::getVideoSelectionInfo()
+{
+    VideoSelectionInfo result;
+    result.success = false;
+    
+    juce::Logger::writeToLog ("=== Getting Video Timeline Selection ===");
+    
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        result.errorMessage = "API client script not found";
+        juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
+        return result;
+    }
+    
+    // Build command: python standalone_api_client.py --action get_video_selection
+    juce::String command = "\"" + pythonExe + "\" ";
+    command += "\"" + scriptFile.getFullPathName() + "\" ";
+    command += "--action get_video_selection";
+    
+    juce::Logger::writeToLog ("Executing timeline selection command...");
+    juce::Logger::writeToLog ("Command: " + command);
+    
+    // Create child process
+    juce::ChildProcess process;
+    
+    if (!process.start (command))
+    {
+        result.errorMessage = "Failed to start Python process";
+        juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
+        return result;
+    }
+    
+    // Wait for completion (PTSL calls can take 1-2 seconds)
+    if (!process.waitForProcessToFinish (10000))  // 10 second timeout
+    {
+        result.errorMessage = "Timeline selection read timed out";
+        juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
+        juce::Logger::writeToLog ("Make sure:");
+        juce::Logger::writeToLog ("1. Pro Tools is running");
+        juce::Logger::writeToLog ("2. You have a timeline selection (In/Out points)");
+        juce::Logger::writeToLog ("3. PTSL is enabled in Pro Tools preferences");
+        process.kill();
+        return result;
+    }
+    
+    // Read output
+    auto output = process.readAllProcessOutput().trim();
+    juce::Logger::writeToLog ("Python output: " + output);
+    
+    // Parse JSON response
+    auto json = juce::JSON::parse (output);
+    if (auto* obj = json.getDynamicObject())
+    {
+        result.success = obj->getProperty ("success");
+        result.inTime = obj->getProperty ("in_time").toString();
+        result.outTime = obj->getProperty ("out_time").toString();
+        result.durationSeconds = (float) (double) obj->getProperty ("duration_seconds");
+        result.inSeconds = (float) (double) obj->getProperty ("in_seconds");
+        result.outSeconds = (float) (double) obj->getProperty ("out_seconds");
+        result.fps = (float) (double) obj->getProperty ("fps");
+        result.errorMessage = obj->getProperty ("error").toString();
+        
+        if (result.success)
+        {
+            juce::Logger::writeToLog ("=== Timeline Selection SUCCESS ===");
+            juce::Logger::writeToLog ("Timeline: " + result.inTime + " - " + result.outTime);
+            juce::Logger::writeToLog ("Duration: " + juce::String (result.durationSeconds, 2) + "s");
+            juce::Logger::writeToLog ("FPS: " + juce::String (result.fps, 2));
+        }
+        else
+        {
+            juce::Logger::writeToLog ("=== Timeline Selection FAILED ===");
+            juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
+            juce::Logger::writeToLog ("Make sure:");
+            juce::Logger::writeToLog ("1. Pro Tools is running");
+            juce::Logger::writeToLog ("2. You have a timeline selection (In/Out points)");
+            juce::Logger::writeToLog ("3. PTSL is enabled in Pro Tools preferences");
+        }
+        
+        return result;
+    }
+    
+    result.errorMessage = "Failed to parse timeline selection response";
+    juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
+    juce::Logger::writeToLog ("Raw output was: " + output);
+    return result;
+}
+
+juce::String PtV2AProcessor::getVideoFileFromProTools(juce::String* errorMessage)
+{
+    juce::Logger::writeToLog ("=== Getting Video File from Pro Tools ===");
+    
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::String errorMsg = "API client script not found";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return juce::String();
+    }
+    
+    // Build command: python standalone_api_client.py --action get_video_file
+    juce::String command = "\"" + pythonExe + "\" ";
+    command += "\"" + scriptFile.getFullPathName() + "\" ";
+    command += "--action get_video_file";
+    
+    juce::Logger::writeToLog ("Executing video file lookup command...");
+    juce::Logger::writeToLog ("Command: " + command);
+    
+    // Create child process
+    juce::ChildProcess process;
+    
+    if (!process.start (command))
+    {
+        juce::String errorMsg = "Failed to start Python process";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return juce::String();
+    }
+    
+    // Wait for completion (PTSL calls can take 1-2 seconds)
+    if (!process.waitForProcessToFinish (10000))  // 10 second timeout
+    {
+        juce::String errorMsg = "Video file lookup timed out";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        process.kill();
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return juce::String();
+    }
+    
+    // Read output
+    auto output = process.readAllProcessOutput().trim();
+    juce::Logger::writeToLog ("Python output: " + output);
+    
+    // Parse JSON response
+    auto json = juce::JSON::parse (output);
+    if (auto* obj = json.getDynamicObject())
+    {
+        bool success = obj->getProperty ("success");
+        auto videoPath = obj->getProperty ("video_path").toString();
+        auto errorFromJson = obj->getProperty ("error").toString();
+        
+        if (success && videoPath.isNotEmpty())
+        {
+            juce::Logger::writeToLog ("=== Video File Lookup SUCCESS ===");
+            juce::Logger::writeToLog ("Video path: " + videoPath);
+            if (errorMessage != nullptr)
+                *errorMessage = "";
+            return videoPath;
+        }
+        else
+        {
+            juce::Logger::writeToLog ("=== Video File Lookup FAILED ===");
+            juce::Logger::writeToLog ("ERROR: " + errorFromJson);
+            if (errorMessage != nullptr)
+                *errorMessage = errorFromJson;
+            return juce::String();
+        }
+    }
+    
+    juce::String errorMsg = "Failed to parse video file response";
+    juce::Logger::writeToLog ("ERROR: " + errorMsg);
+    juce::Logger::writeToLog ("Raw output was: " + output);
+    if (errorMessage != nullptr)
+        *errorMessage = errorMsg;
+    return juce::String();
+}
+
+juce::String PtV2AProcessor::trimVideoSegment(
+    const juce::String& videoPath,
+    float startSeconds,
+    float endSeconds,
+    juce::String* errorMessage)
+{
+    juce::Logger::writeToLog ("=== Trimming Video Segment ===");
+    juce::Logger::writeToLog ("Video: " + videoPath);
+    juce::Logger::writeToLog ("Range: " + juce::String (startSeconds, 2) + "s - " + juce::String (endSeconds, 2) + "s");
+    
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::String errorMsg = "API client script not found";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return juce::String();
+    }
+    
+    // Build command: python standalone_api_client.py --action trim_video 
+    //                --video "path" --start-time X --end-time Y
+    juce::String command = "\"" + pythonExe + "\" ";
+    command += "\"" + scriptFile.getFullPathName() + "\" ";
+    command += "--action trim_video ";
+    command += "--video \"" + videoPath + "\" ";
+    command += "--start-time " + juce::String (startSeconds) + " ";
+    command += "--end-time " + juce::String (endSeconds);
+    
+    juce::Logger::writeToLog ("Executing video trim command...");
+    juce::Logger::writeToLog ("Command: " + command);
+    
+    // Create child process
+    juce::ChildProcess process;
+    
+    if (!process.start (command))
+    {
+        juce::String errorMsg = "Failed to start Python process";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return juce::String();
+    }
+    
+    // Wait for completion (FFmpeg trimming can take 1-3 seconds)
+    if (!process.waitForProcessToFinish (60000))  // 60 second timeout
+    {
+        juce::String errorMsg = "Video trimming timed out";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        process.kill();
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return juce::String();
+    }
+    
+    // Read output
+    auto output = process.readAllProcessOutput().trim();
+    juce::Logger::writeToLog ("Python output: " + output);
+    
+    // Parse JSON response
+    auto json = juce::JSON::parse (output);
+    if (auto* obj = json.getDynamicObject())
+    {
+        bool success = obj->getProperty ("success");
+        auto outputPath = obj->getProperty ("output_path").toString();
+        auto errorFromJson = obj->getProperty ("error").toString();
+        
+        if (success && outputPath.isNotEmpty())
+        {
+            juce::Logger::writeToLog ("=== Video Trim SUCCESS ===");
+            juce::Logger::writeToLog ("Output path: " + outputPath);
+            if (errorMessage != nullptr)
+                *errorMessage = "";
+            return outputPath;
+        }
+        else
+        {
+            juce::Logger::writeToLog ("=== Video Trim FAILED ===");
+            juce::Logger::writeToLog ("ERROR: " + errorFromJson);
+            if (errorMessage != nullptr)
+                *errorMessage = errorFromJson;
+            return juce::String();
+        }
+    }
+    
+    juce::String errorMsg = "Failed to parse video trimming response";
+    juce::Logger::writeToLog ("ERROR: " + errorMsg);
+    juce::Logger::writeToLog ("Raw output was: " + output);
+    if (errorMessage != nullptr)
+        *errorMessage = errorMsg;
+    return juce::String();
+}
+
+bool PtV2AProcessor::validateVideoDuration(
+    float durationSeconds,
+    float maxDuration,
+    juce::String* errorMessage)
+{
+    juce::Logger::writeToLog ("=== Validating Video Duration ===");
+    juce::Logger::writeToLog ("Duration: " + juce::String (durationSeconds, 2) + "s (max: " + 
+         juce::String (maxDuration, 2) + "s)");
+    
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::String errorMsg = "API client script not found";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return false;
+    }
+    
+    // Build command: python standalone_api_client.py --action validate_duration 
+    //                --duration X --max-duration Y
+    juce::String command = "\"" + pythonExe + "\" ";
+    command += "\"" + scriptFile.getFullPathName() + "\" ";
+    command += "--action validate_duration ";
+    command += "--duration " + juce::String (durationSeconds) + " ";
+    command += "--max-duration " + juce::String (maxDuration);
+    
+    juce::Logger::writeToLog ("Executing duration validation command...");
+    juce::Logger::writeToLog ("Command: " + command);
+    
+    // Create child process
+    juce::ChildProcess process;
+    
+    if (!process.start (command))
+    {
+        juce::String errorMsg = "Failed to start Python process";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return false;
+    }
+    
+    // Wait for completion (should be instant)
+    if (!process.waitForProcessToFinish (5000))  // 5 second timeout
+    {
+        juce::String errorMsg = "Duration validation timed out";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        process.kill();
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return false;
+    }
+    
+    // Read output
+    auto output = process.readAllProcessOutput().trim();
+    juce::Logger::writeToLog ("Python output: " + output);
+    
+    // Parse JSON response
+    auto json = juce::JSON::parse (output);
+    if (auto* obj = json.getDynamicObject())
+    {
+        bool valid = obj->getProperty ("valid");
+        auto errorFromJson = obj->getProperty ("error").toString();
+        
+        if (valid)
+        {
+            juce::Logger::writeToLog ("=== Duration Validation SUCCESS ===");
+            juce::Logger::writeToLog ("Duration is valid");
+            if (errorMessage != nullptr)
+                *errorMessage = "";
+            return true;
+        }
+        else
+        {
+            juce::Logger::writeToLog ("=== Duration Validation FAILED ===");
+            juce::Logger::writeToLog ("ERROR: " + errorFromJson);
+            if (errorMessage != nullptr)
+                *errorMessage = errorFromJson;
+            return false;
+        }
+    }
+    
+    juce::String errorMsg = "Failed to parse duration validation response";
+    juce::Logger::writeToLog ("ERROR: " + errorMsg);
+    juce::Logger::writeToLog ("Raw output was: " + output);
+    if (errorMessage != nullptr)
+        *errorMessage = errorMsg;
+    return false;
 }
 
 //==============================================================================

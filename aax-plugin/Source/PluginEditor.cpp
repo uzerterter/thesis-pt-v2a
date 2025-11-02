@@ -41,14 +41,15 @@ void PtV2AEditor::handleRenderButtonClicked()
     juce::Logger::writeToLog ("=== Render Button Clicked ===");
     juce::Logger::writeToLog ("Prompt: " + prompt.getText());
     
-    // Step 1: Validate API availability before starting generation
-    // Prevents wasting time if API server is not running
+    // Disable button during processing
     renderButton.setEnabled (false);
-    renderButton.setButtonText ("Checking API...");
+    renderButton.setButtonText ("Checking...");
     
+    //==========================================================================
+    // Step 1: Check API availability
+    //==========================================================================
     if (!processor.isAPIAvailable (PtV2AProcessor::DEFAULT_API_URL))
     {
-        // API not reachable - show error and restore button
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
             "API Not Available",
@@ -64,69 +65,19 @@ void PtV2AEditor::handleRenderButtonClicked()
     }
     
     //==========================================================================
-    // Step 2: Locate test video file
+    // Step 2: Check FFmpeg availability
     //==========================================================================
-    // PHASE 1 LIMITATION: Uses hardcoded test video path
-    // TODO Phase 2: Implement FileChooser dialog for user video selection
-    // TODO Phase 3: Extract video directly from Pro Tools timeline (PTSL API)
+    renderButton.setButtonText ("Checking FFmpeg...");
     
-    juce::File testVideo;
-    
-    // Strategy: Try to locate test video in multiple known locations
-    // This is fragile but acceptable for Phase 1 prototype
-    
-    // Get plugin executable location
-    auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    auto pluginDir = pluginFile.getParentDirectory();
-    
-#if JUCE_WINDOWS
-    // Windows: Navigate up from build directory to find project root
-    // Build path: thesis-pt-v2a/build/pt_v2a_artefacts/Debug/AAX/pt_v2a.aaxplugin/Contents/x64/
-    // Target:     thesis-pt-v2a/
-    auto projectRoot = pluginDir;
-    
-    // Search up to 8 levels to find thesis-pt-v2a root
-    // Identified by presence of "companion" and "aax-plugin" subdirectories
-    for (int i = 0; i < 8; ++i)
+    if (!processor.isFFmpegAvailable())
     {
-        if (projectRoot.getChildFile("companion").exists() &&
-            projectRoot.getChildFile("aax-plugin").exists())
-        {
-            juce::Logger::writeToLog ("Found project root: " + projectRoot.getFullPathName());
-            break;
-        }
-        projectRoot = projectRoot.getParentDirectory();
-    }
-    
-    // Try relative path from project root to test data
-    auto testVideoPath = projectRoot.getChildFile("..\\..\\..\\model-tests\\data\\MMAudio_examples\\noSound\\sora_beach.mp4");
-    if (testVideoPath.existsAsFile())
-    {
-        testVideo = testVideoPath;
-        juce::Logger::writeToLog ("Using relative test video: " + testVideo.getFullPathName());
-    }
-    else
-    {
-        // Fallback: Absolute path (only works on your development machine!)
-        testVideo = juce::File("C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\model-tests\\data\\MMAudio_examples\\noSound\\sora_beach.mp4");
-        juce::Logger::writeToLog ("Using absolute fallback path: " + testVideo.getFullPathName());
-    }
-#else
-    // macOS/Linux: Hardcoded absolute path
-    testVideo = juce::File("/mnt/disk1/users/ludwig/ludwig-thesis/model-tests/data/MMAudio_examples/noSound/sora_beach.mp4");
-#endif
-    
-    // Validate test video exists
-    if (!testVideo.existsAsFile())
-    {
-        juce::Logger::writeToLog ("ERROR: Test video not found at: " + testVideo.getFullPathName());
-        
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
-            "Test Video Not Found",
-            "Test video file not found:\n" + testVideo.getFullPathName() + "\n\n"
-            "Please place a test video at this location, or update the path in PluginEditor.cpp.\n\n"
-            "Expected: sora_beach.mp4 in model-tests\\data\\MMAudio_examples\\noSound\\",
+            "FFmpeg Not Found",
+            "FFmpeg is required for timeline selection support.\n\n"
+            "Please install FFmpeg and add it to your system PATH.\n\n"
+            "Download: https://ffmpeg.org/download.html\n"
+            "After installation, restart Pro Tools.",
             "OK"
         );
         
@@ -136,37 +87,153 @@ void PtV2AEditor::handleRenderButtonClicked()
     }
     
     //==========================================================================
-    // Step 3: Call MMAudio API to generate audio
+    // Step 3: Get timeline selection from Pro Tools (Phase 3B)
     //==========================================================================
-    renderButton.setButtonText ("Generating...");
+    renderButton.setButtonText ("Reading Selection...");
+    
+    auto selection = processor.getVideoSelectionInfo();
+    
+    if (!selection.success)
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Timeline Selection Error",
+            "Could not read timeline selection from Pro Tools:\n\n" +
+            selection.errorMessage + "\n\n"
+            "Make sure:\n"
+            "1. Pro Tools is running\n"
+            "2. You have a timeline selection (In/Out points)\n"
+            "3. PTSL is enabled in Pro Tools preferences",
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("Timeline selection: " + 
+                              juce::String (selection.durationSeconds, 2) + "s");
+    
+    //==========================================================================
+    // Step 4: Validate duration (strict 10-second limit)
+    //==========================================================================
+    renderButton.setButtonText ("Validating...");
+    
+    juce::String durationError;
+    if (!processor.validateVideoDuration (selection.durationSeconds, 10.0f, &durationError))
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Selection Too Long",
+            "Timeline selection is too long:\n\n" +
+            durationError + "\n\n"
+            "MMAudio works best with 8-10 second clips.\n"
+            "Please shorten your timeline selection.",
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        return;
+    }
+    
+    //==========================================================================
+    // Step 5: Get video file path from Pro Tools
+    //==========================================================================
+    renderButton.setButtonText ("Finding Video...");
+    
+    juce::String videoError;
+    juce::String videoPath = processor.getVideoFileFromProTools (&videoError);
+    
+    if (videoPath.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "No Video Found",
+            "Could not find video file in Pro Tools session:\n\n" +
+            videoError + "\n\n"
+            "Make sure:\n"
+            "1. Your Pro Tools session has a video track\n"
+            "2. Video file is imported to the session",
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("Video file: " + videoPath);
+    
+    //==========================================================================
+    // Step 6: Trim video to selected range (Phase 3B)
+    //==========================================================================
+    renderButton.setButtonText ("Trimming Video...");
+    
+    juce::String trimError;
+    juce::String trimmedPath = processor.trimVideoSegment (
+        videoPath,
+        selection.inSeconds,
+        selection.outSeconds,
+        &trimError
+    );
+    
+    if (trimmedPath.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Video Trimming Failed",
+            "Could not trim video segment:\n\n" + trimError + "\n\n"
+            "This may be due to:\n"
+            "- FFmpeg error\n"
+            "- Invalid video file\n"
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("Trimmed video: " + trimmedPath);
+    
+    //==========================================================================
+    // Step 7: Generate audio from trimmed video
+    //==========================================================================
+    renderButton.setButtonText ("Generating Audio...");
     juce::Logger::writeToLog ("Starting audio generation...");
-    juce::Logger::writeToLog ("Video: " + testVideo.getFullPathName());
+    juce::Logger::writeToLog ("Selection: " + selection.inTime + " - " + selection.outTime);
+    juce::Logger::writeToLog ("Duration: " + juce::String (selection.durationSeconds, 2) + "s");
     juce::Logger::writeToLog ("Prompt: " + prompt.getText());
     
-    // Call processor with default parameters
-    // Using constants from PtV2AProcessor instead of hardcoded values
-    juce::String errorMessage;
+    juce::String generationError;
     juce::String outputPath = processor.generateAudioFromVideo (
-        testVideo,
+        juce::File (trimmedPath),
         prompt.getText(),
-        PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT,  // "voices, music"
-        PtV2AProcessor::DEFAULT_SEED,             // 42
-        &errorMessage
+        PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT,
+        PtV2AProcessor::DEFAULT_SEED,
+        &generationError
     );
     
     //==========================================================================
-    // Step 4: Handle generation result
+    // Step 8: Cleanup temporary trimmed video file
+    //==========================================================================
+    juce::File (trimmedPath).deleteFile();
+    juce::Logger::writeToLog ("Cleaned up trimmed video: " + trimmedPath);
+    
+    //==========================================================================
+    // Step 9: Handle generation result
     //==========================================================================
     if (outputPath.isEmpty())
     {
-        // Generation failed - show error details
         juce::Logger::writeToLog ("ERROR: Audio generation failed");
-        juce::Logger::writeToLog ("Error: " + errorMessage);
+        juce::Logger::writeToLog ("Error: " + generationError);
         
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
             "Generation Failed",
-            "Failed to generate audio:\n\n" + errorMessage,
+            "Failed to generate audio:\n\n" + generationError,
             "OK"
         );
         
@@ -176,7 +243,7 @@ void PtV2AEditor::handleRenderButtonClicked()
     }
     
     //==========================================================================
-    // Success! Audio file generated and imported to Pro Tools
+    // Success! Audio generated and imported to Pro Tools
     //==========================================================================
     juce::Logger::writeToLog ("=== Generation Successful ===");
     juce::Logger::writeToLog ("Output: " + outputPath);
@@ -184,14 +251,15 @@ void PtV2AEditor::handleRenderButtonClicked()
     juce::AlertWindow::showMessageBoxAsync (
         juce::MessageBoxIconType::InfoIcon,
         "Generation Complete!",
-        "Audio generated successfully!\n\n"
+        "Audio generated successfully from timeline selection!\n\n"
+        "Selection: " + selection.inTime + " - " + selection.outTime + "\n"
+        "Duration: " + juce::String (selection.durationSeconds, 1) + "s\n\n"
         "The audio has been imported to Pro Tools session.\n"
         "Check the Pro Tools timeline for the new audio track.",
         "OK"
     );
     
     // Restore button state
-    // Note: This happens immediately, not after alert is closed (async alert)
     renderButton.setEnabled (true);
     renderButton.setButtonText ("Render Audio");
 }

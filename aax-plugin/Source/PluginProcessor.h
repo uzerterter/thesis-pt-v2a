@@ -228,6 +228,124 @@ public:
      */
     static juce::File getLogFile();
 
+    //==============================================================================
+    // Timeline Selection & Video Trimming
+    //==============================================================================
+    
+    /**
+     * Video selection information from Pro Tools timeline
+     * Returned by getVideoSelectionInfo()
+     */
+    struct VideoSelectionInfo
+    {
+        bool success;                  ///< True if selection read successfully
+        juce::String inTime;           ///< In-point timecode (e.g., "00:00:05:00")
+        juce::String outTime;          ///< Out-point timecode (e.g., "00:00:10:00")
+        float durationSeconds;         ///< Duration in seconds (e.g., 5.0)
+        float inSeconds;               ///< In-point in seconds (e.g., 5.0)
+        float outSeconds;              ///< Out-point in seconds (e.g., 10.0)
+        float fps;                     ///< Frame rate (e.g., 30.0, 29.97, 24.0)
+        juce::String errorMessage;     ///< Error details if success=false
+    };
+    
+    /**
+     * Check if FFmpeg is available for video trimming
+     * FFmpeg is required for Phase 3B timeline selection support
+     * 
+     * @return true if FFmpeg found in system PATH with valid version
+     * 
+     * Example:
+     *   if (!processor.isFFmpegAvailable()) {
+     *       showError("FFmpeg required. Please install FFmpeg.");
+     *   }
+     */
+    bool isFFmpegAvailable();
+    
+    /**
+     * Get timeline selection from Pro Tools using py-ptsl
+     * Reads In/Out points from Pro Tools timeline
+     * 
+     * @return VideoSelectionInfo struct with selection details
+     *         Check success field to determine if operation succeeded
+     * 
+     * Example:
+     *   auto selection = processor.getVideoSelectionInfo();
+     *   if (selection.success) {
+     *       DBG("Selection: " << selection.durationSeconds << "s");
+     *   } else {
+     *       showError(selection.errorMessage);
+     *   }
+     */
+    VideoSelectionInfo getVideoSelectionInfo();
+    
+    /**
+     * Get video file path from Pro Tools session using py-ptsl
+     * Searches for video files in current Pro Tools session
+     * 
+     * @param errorMessage [OUT] Error details on failure (optional)
+     * @return Path to first video file found, or empty string if none found
+     * 
+     * Example:
+     *   juce::String error;
+     *   juce::String videoPath = processor.getVideoFileFromProTools(&error);
+     *   if (videoPath.isEmpty()) {
+     *       showError("No video found: " + error);
+     *   }
+     */
+    juce::String getVideoFileFromProTools(juce::String* errorMessage = nullptr);
+    
+    /**
+     * Trim video segment using FFmpeg
+     * Creates temporary trimmed video file for specified time range
+     * 
+     * @param videoPath     Path to source video file
+     * @param startSeconds  Start time in seconds (from In-point)
+     * @param endSeconds    End time in seconds (from Out-point)
+     * @param errorMessage  [OUT] Error details on failure (optional)
+     * @return Path to trimmed video file (in temp directory), or empty string on failure
+     * 
+     * Example:
+     *   juce::String error;
+     *   juce::String trimmedPath = processor.trimVideoSegment(
+     *       "C:/video.mp4", 5.0, 10.0, &error
+     *   );
+     *   if (!trimmedPath.isEmpty()) {
+     *       // Use trimmed video for audio generation
+     *       // Remember to delete temp file afterward!
+     *   }
+     * 
+     * @note Caller is responsible for deleting temporary trimmed file
+     * @note Uses FFmpeg's `-c copy` for fast trimming (no re-encoding)
+     */
+    juce::String trimVideoSegment(
+        const juce::String& videoPath,
+        float startSeconds,
+        float endSeconds,
+        juce::String* errorMessage = nullptr
+    );
+    
+    /**
+     * Validate video duration against maximum allowed (10 seconds)
+     * MMAudio was trained on 8-second clips, so we enforce 10s maximum
+     * 
+     * @param durationSeconds Video duration in seconds
+     * @param maxDuration     Maximum allowed duration (default: 10.0s)
+     * @param errorMessage    [OUT] Error details if validation fails (optional)
+     * @return true if duration is valid (> 0 and <= maxDuration)
+     * 
+     * Example:
+     *   juce::String error;
+     *   if (!processor.validateVideoDuration(selection.durationSeconds, 10.0, &error)) {
+     *       showError("Selection too long: " + error);
+     *       return;
+     *   }
+     */
+    bool validateVideoDuration(
+        float durationSeconds,
+        float maxDuration = 10.0f,
+        juce::String* errorMessage = nullptr
+    );
+
 private:
     //==============================================================================
     // Private Members

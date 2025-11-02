@@ -34,6 +34,11 @@ aax-plugin/Resources/python/
 # Exception: Keep setup documentation
 !aax-plugin/Resources/python/README.md
 
+# Embedded FFmpeg (too large for Git, download separately)
+aax-plugin/Resources/ffmpeg/ffmpeg.exe
+# Exception: Keep README with download instructions
+!aax-plugin/Resources/ffmpeg/README.md
+
 # Compiled binaries
 *.exe
 *.dll

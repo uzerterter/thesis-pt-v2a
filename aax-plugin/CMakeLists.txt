@@ -62,6 +62,9 @@ juce_add_plugin(pt_v2a
     NEEDS_MIDI_INPUT FALSE            # No MIDI required
     NEEDS_MIDI_OUTPUT FALSE           # No MIDI output
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE # GUI doesn't capture keyboard
+    
+    # Resources Embedding - CRITICAL for embedded Python + FFmpeg
+    COPY_PLUGIN_AFTER_BUILD TRUE      # Enables automatic plugin installation after build
 )
 
 # ==============================================================================
@@ -70,6 +73,20 @@ juce_add_plugin(pt_v2a
 target_sources(pt_v2a PRIVATE         # only for this target
     Source/PluginProcessor.cpp        # Audio processing and business logic
     Source/PluginEditor.cpp           # GUI implementation
+)
+
+# ==============================================================================
+# Embed Resources Folder
+# ==============================================================================
+# JUCE's COPY_PLUGIN_AFTER_BUILD does NOT automatically copy the Resources/ folder!
+# We must explicitly add a post-build command to copy it into the .aaxplugin bundle.
+add_custom_command(TARGET pt_v2a_AAX POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying Resources folder to plugin bundle..."
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/Resources
+        $<TARGET_FILE_DIR:pt_v2a_AAX>/../Resources
+    COMMENT "Embedding Python runtime and scripts into plugin bundle"
+    VERBATIM
 )
 
 # ==============================================================================
@@ -159,8 +176,8 @@ add_custom_command(
 # ==============================================================================
 # Embedded Python Runtime
 # ==============================================================================
-# IMPORTANT: JUCE automatically copies Resources/ folder into the .aaxplugin bundle
-# during the build process. No additional copy commands needed here.
+# IMPORTANT: JUCE copies Resources/ folder into the .aaxplugin bundle because
+# we set COPY_PLUGIN_AFTER_BUILD TRUE in juce_add_plugin() above.
 #
 # Expected Resources/ structure (must be prepared manually):
 #   Resources/

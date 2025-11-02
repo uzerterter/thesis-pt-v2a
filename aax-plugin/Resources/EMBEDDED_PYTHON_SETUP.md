@@ -46,13 +46,54 @@ cd aax-plugin/Resources/python
 python.exe -m pip install -e ..\..\..\external\py-ptsl
 
 # Install other dependencies
-python.exe -m pip install grpcio protobuf soundfile
+python.exe -m pip install grpcio protobuf soundfile requests
 
 # Optional: Install poetry (if py-ptsl requires it)
 python.exe -m pip install poetry
 ```
 
-### 5. Setup Symlinks (Development Only)
+**Note:** The `requests` package is needed for MMAudio API communication.
+
+### 5. Embed FFmpeg Binary (Required for Phase 3B - Timeline Selection)
+
+**FFmpeg must be bundled with the plugin** for a self-contained distribution.
+
+#### Download FFmpeg (Windows):
+
+**Option 1: Pre-built essentials build (Recommended - smaller size)**
+1. Go to: https://github.com/BtbN/FFmpeg-Builds/releases
+2. Download: `ffmpeg-master-latest-win64-gpl.zip` (~150 MB)
+3. Extract the zip file
+4. Copy **only** `ffmpeg.exe` from the `bin/` folder
+
+**Option 2: Official build**
+1. Go to: https://ffmpeg.org/download.html#build-windows
+2. Download: Windows builds from gyan.dev or BtbN
+3. Extract and find `ffmpeg.exe` (typically in `bin/` folder)
+
+#### Install to Plugin:
+
+```cmd
+# Copy ffmpeg.exe to plugin Resources
+copy ffmpeg.exe aax-plugin\Resources\ffmpeg\ffmpeg.exe
+```
+
+**Directory structure:**
+```
+aax-plugin/Resources/
+├── python/          # Embedded Python
+└── ffmpeg/          # Embedded FFmpeg
+    └── ffmpeg.exe   # ~100 MB single file
+```
+
+**Git Note:** Add `Resources/ffmpeg/` to `.gitignore` (binary files are too large for git)
+
+**Verify:**
+```cmd
+aax-plugin\Resources\ffmpeg\ffmpeg.exe -version
+```
+
+### 6. Setup Symlinks (Development Only)
 
 For development, use symlinks to avoid copying files:
 
@@ -68,7 +109,7 @@ mklink standalone_api_client.py ..\..\..\..\companion\standalone_api_client.py
 **Alternative: Let CMake copy files** (automatic on build):
 CMake will automatically copy files from `companion/` to `Resources/` on each build.
 
-### 6. Verify Setup
+### 7. Verify Setup
 
 Test that embedded Python can import all modules:
 

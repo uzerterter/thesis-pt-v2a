@@ -6,6 +6,8 @@ grpcio>=1.76.0
 protobuf>=6.33.0
 soundfile>=0.12.1
 poetry>=1.8.1
+requests>=2.31.0
+imageio-ffmpeg>=0.4.9  # Cross-platform FFmpeg binaries via Python package
 
 # py-ptsl will be installed separately in editable mode from ../external/py-ptsl pip install -e .
 
