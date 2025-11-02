@@ -1,21 +1,20 @@
 """
-PTSL Integration v2 - Using py-ptsl library
+PTSL Integration - Using py-ptsl library
 ============================================
-
-This module replaces our custom ptsl_client.py with the professional py-ptsl library.
 
 Advantages over custom implementation:
 - Professional, tested, maintained library
 - Better API (Python-native instead of JSON)
 - Type safety with .pyi files
 - Comprehensive error handling
-- All PTSL commands already implemented
+- PTSL commands already implemented
 
 Installation:
     pip install -e ../external/py-ptsl
+    install other dependencies from companion/requirements.txt
 
 Usage:
-    >>> from ptsl_client_v2 import import_audio_to_pro_tools
+    >>> from ptsl_client import import_audio_to_pro_tools
     >>> success = import_audio_to_pro_tools("C:/audio/generated.flac")
 """
 
@@ -43,7 +42,7 @@ except ImportError:
 
 def import_audio_to_pro_tools(
     audio_path: str,
-    location: str = "SessionStart",  # For API compatibility with v1 (currently unused)
+    location: str = "SessionStart",  # For API compatibility with old version (currently unused)
     company_name: str = "Master Thesis",
     app_name: str = "PT V2A Plugin",
     host: str = "localhost",
@@ -52,22 +51,18 @@ def import_audio_to_pro_tools(
     """
     Import audio file to Pro Tools using py-ptsl library.
     
-    This is a drop-in replacement for the old import_audio_to_pro_tools function
-    but uses the py-ptsl library instead of our custom implementation.
-    
     Features:
-        - Automatic FLAC → WAV conversion (PTSL requires WAV)
-        - Automatic connection management
-        - Better error handling
-        - Professional, tested codebase
+        - FLAC → WAV conversion (PTSL requires WAV)
+        - Connection management
+        - Error handling
     
     Args:
         audio_path (str): Path to audio file (WAV or FLAC)
         location (str): Timeline position - kept for API compatibility with v1
                        Currently fixed to SessionStart (sample 0)
                        Future: Could use py-ptsl's timecode positioning
-        company_name (str): Your company name (for PTSL logs)
-        app_name (str): Application name (for PTSL logs)
+        company_name (str): for PTSL logs
+        app_name (str): for PTSL logs
         host (str): PTSL server hostname (default: localhost)
         port (int): PTSL server port (default: 31416)
     
@@ -75,10 +70,10 @@ def import_audio_to_pro_tools(
         bool: True if import succeeded, False otherwise
         
     Example:
-        >>> # Simple usage (v1 compatible)
+        >>> # Simple usage
         >>> success = import_audio_to_pro_tools("C:/audio/generated.flac")
-        
-        >>> # With location parameter (v1 compatible)
+
+        >>> # With location parameter
         >>> success = import_audio_to_pro_tools(
         >>>     "C:/audio/file.wav",
         >>>     location="SessionStart"
@@ -133,6 +128,18 @@ def import_audio_to_pro_tools(
         print(f"ERROR: Audio file not found: {actual_path}", file=sys.stderr)
         return False
     
+    # Validate file extension - Pro Tools only accepts pure audio formats via PTSL
+    SUPPORTED_EXTENSIONS = {'.wav', '.aiff', '.aif', '.mp3'}
+    file_ext = actual_path.suffix.lower()
+    
+    if file_ext not in SUPPORTED_EXTENSIONS:
+        print(f"ERROR: Unsupported file format: {file_ext}", file=sys.stderr)
+        print(f"       Pro Tools PTSL Import only supports: {', '.join(sorted(SUPPORTED_EXTENSIONS))}", file=sys.stderr)
+        if file_ext in {'.mp4', '.mov', '.avi', '.mkv'}:
+            print(f"       For video files ({file_ext}), extract audio first using:", file=sys.stderr)
+            print(f"       ffmpeg -i \"{actual_path.name}\" -vn -acodec pcm_s16le output.wav", file=sys.stderr)
+        return False
+    
     # Import using py-ptsl
     try:
         # py-ptsl expects address in "host:port" format
@@ -148,7 +155,7 @@ def import_audio_to_pro_tools(
             print(f"Importing audio to Pro Tools...")
             print(f"  File: {actual_path}")
             
-            # Import audio to new track at session start
+            # Import audio to new track at session start in new track
             # Note: Using forward slashes even on Windows (PTSL requirement)
             file_path = str(actual_path).replace('\\', '/')
             

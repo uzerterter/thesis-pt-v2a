@@ -1,8 +1,14 @@
 """
-End-to-End Test: Audio Generation + PTSL Import
-Tests the complete workflow from video to Pro Tools timeline
+Test: PTSL Import to Pro Tools timeline with pre-generated audio 
 
-Now using py-ptsl library for cleaner, more maintainable code.
+Using py-ptsl library. 
+
+Prerequisites: 
+- Pro Tools running with PTSL enabled
+- A session open in Pro Tools
+- venv with installed dependencies:
+    -- py-ptsl (pip install -e ../../external/py-ptsl)
+    -- requirements from companion/requirements.txt
 """
 
 import sys

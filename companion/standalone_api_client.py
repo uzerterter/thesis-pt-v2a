@@ -2,8 +2,7 @@
 """
 Standalone MMAudio API Client
 
-A client script that uses the standalone MMAudio API server for fast video-to-audio generation.
-This replaces the ComfyUI-based approach with a direct API call for better performance.
+A client script that uses the standalone MMAudio API server for video-to-audio generation.
 
 Usage:
     # Interactive Mode (current)
@@ -459,9 +458,9 @@ def main():
         
         if not check_api_health(args.api_url, quiet=quiet):
             if not quiet:
-                print("\n💡 Make sure the API server is running:")
+                print("\n💡 Make sure the API server is running on server:")
                 print("   docker restart mmaudio-api")
-                print("   # or manually: python main.py")
+                print("   #  python main.py")
             return 1
         
         if not quiet:
