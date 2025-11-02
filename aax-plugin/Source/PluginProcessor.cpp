@@ -1,11 +1,29 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+//==============================================================================
+// Static constant definitions
+//==============================================================================
+const juce::String PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT = "voices, music";
+const juce::String PtV2AProcessor::DEFAULT_API_URL = "http://localhost:8000";
+
+//==============================================================================
+// Static member initialization
+//==============================================================================
+std::unique_ptr<juce::FileLogger> PtV2AProcessor::fileLogger = nullptr;
+
+//==============================================================================
+// Constructor
+//==============================================================================
 PtV2AProcessor::PtV2AProcessor()
 : AudioProcessor (BusesProperties()
                     .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                     .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
-{}
+{
+    // Initialize file logger on first plugin instance
+    // This ensures logs are captured from plugin startup
+    initializeLogger();
+}
 
 void PtV2AProcessor::prepareToPlay (double /*sampleRate*/, int /*samplesPerBlock*/) {}
 void PtV2AProcessor::releaseResources() {}
@@ -375,6 +393,93 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // The Python script handles everything, so we just return success
     return "background_generation_in_progress";
 }
+
+//==============================================================================
+// Logging Implementation
+//==============================================================================
+
+bool PtV2AProcessor::initializeLogger()
+{
+    // Only initialize once (singleton pattern)
+    if (fileLogger != nullptr)
+        return true;
+    
+    // Get user's app data directory
+    // Windows: C:\Users\[username]\AppData\Roaming\PTV2A\
+    // macOS: ~/Library/Application Support/PTV2A/
+    auto logDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                       .getChildFile ("PTV2A");
+    
+    // Ensure directory exists
+    if (!logDir.exists())
+    {
+        auto result = logDir.createDirectory();
+        if (result.failed())
+        {
+            // Can't create directory - logging will fail
+            DBG ("Failed to create log directory: " + result.getErrorMessage());
+            return false;
+        }
+    }
+    
+    // Clean up old rotated logs (industry standard: keep last 30 days)
+    // This prevents unlimited log file accumulation over time
+    // JUCE's FileLogger creates .log.1, .log.2, etc. when rotating
+    auto now = juce::Time::getCurrentTime();
+    int deletedCount = 0;
+    
+    for (auto logFile : logDir.findChildFiles (juce::File::findFiles, false, "*.log*"))
+    {
+        // Calculate file age in days
+        auto fileAge = now - logFile.getCreationTime();
+        
+        // Delete logs older than 30 days (industry standard)
+        if (fileAge.inDays() > 30)
+        {
+            if (logFile.deleteFile())
+                deletedCount++;
+        }
+    }
+    
+    if (deletedCount > 0)
+        DBG ("Cleaned up " + juce::String(deletedCount) + " old log files");
+    
+    // Create log file: PTV2A.log
+    auto logFile = logDir.getChildFile ("PTV2A.log");
+    
+    // Create FileLogger instance
+    // Parameters: logFile, welcomeMessage, maxInitialFileSizeBytes
+    fileLogger = std::make_unique<juce::FileLogger> (
+        logFile,
+        "PTV2A Plugin Log",
+        1024 * 1024 * 5  // 5 MB max log file size (then rotates)
+    );
+    
+    // Set as default logger for all juce::Logger::writeToLog() calls
+    juce::Logger::setCurrentLogger (fileLogger.get());
+    
+    // Write startup message
+    juce::Logger::writeToLog ("===========================================");
+    juce::Logger::writeToLog ("PTV2A Plugin Started");
+    juce::Logger::writeToLog ("Log file: " + logFile.getFullPathName());
+    juce::Logger::writeToLog ("Timestamp: " + juce::Time::getCurrentTime().toString (true, true));
+    juce::Logger::writeToLog ("===========================================");
+    
+    return true;
+}
+
+juce::File PtV2AProcessor::getLogFile()
+{
+    if (fileLogger == nullptr)
+        return juce::File();
+    
+    // Get log file path from logger
+    return fileLogger->getLogFile();
+}
+
+//==============================================================================
+// Plugin Instance Creation
+//==============================================================================
 
 // This creates new instances of the plugin
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

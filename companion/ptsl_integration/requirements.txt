@@ -5,6 +5,7 @@
 grpcio>=1.76.0
 protobuf>=6.33.0
 soundfile>=0.12.1
+poetry>=1.8.1
 
 # py-ptsl will be installed separately in editable mode from ../external/py-ptsl pip install -e .
 
