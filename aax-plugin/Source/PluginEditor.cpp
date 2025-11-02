@@ -20,6 +20,13 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     };
     addAndMakeVisible (renderButton);
     
+    // Configure render dummy button with click handler
+    renderDummyButton.onClick = [this]
+    {
+        handleRenderDummyButtonClicked();
+    };
+    addAndMakeVisible (renderDummyButton);
+    
     // Configure open log button with click handler
     openLogButton.onClick = [this]
     {
@@ -265,6 +272,122 @@ void PtV2AEditor::handleRenderButtonClicked()
 }
 
 //==============================================================================
+// Event Handler - Render Dummy Button Click (Presentation Mode)
+//==============================================================================
+void PtV2AEditor::handleRenderDummyButtonClicked()
+{
+    juce::Logger::writeToLog ("=== Render Dummy Button Clicked (Presentation Mode) ===");
+    juce::Logger::writeToLog ("Prompt: " + prompt.getText());
+    
+    // Disable button during processing
+    renderDummyButton.setEnabled (false);
+    renderDummyButton.setButtonText ("Generating...");
+    
+    //==========================================================================
+    // Step 1: Check API availability
+    //==========================================================================
+    if (!processor.isAPIAvailable (PtV2AProcessor::DEFAULT_API_URL))
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "API Not Available",
+            "MMAudio API is not running!\n\n"
+            "Please start the API server\n"
+            "Or check if it's running on http://localhost:8000",
+            "OK"
+        );
+        
+        renderDummyButton.setEnabled (true);
+        renderDummyButton.setButtonText ("Render (dummy video)");
+        return;
+    }
+    
+    //==========================================================================
+    // Step 2: Use predefined test video from temp/pt_v2a directory
+    //==========================================================================
+    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    auto ptv2aDir = tempDir.getChildFile ("ptv2a");
+    juce::File dummyVideo = ptv2aDir.getChildFile ("test_video.mp4");
+    
+    if (!dummyVideo.existsAsFile())
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Dummy Video Not Found",
+            "Test video file not found at:\n\n" + dummyVideo.getFullPathName() + "\n\n"
+            "Please place a test video file at:\n" + 
+            ptv2aDir.getFullPathName() + "\\test_video.mp4",
+            "OK"
+        );
+        
+        renderDummyButton.setEnabled (true);
+        renderDummyButton.setButtonText ("Render (dummy video)");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("Using dummy video from temp: " + dummyVideo.getFullPathName());
+    
+    //==========================================================================
+    // Step 3: Generate audio from dummy video
+    //==========================================================================
+    juce::Logger::writeToLog ("Starting audio generation with dummy video...");
+    juce::Logger::writeToLog ("Prompt: " + prompt.getText());
+    
+    juce::String generationError;
+    juce::String outputPath = processor.generateAudioFromVideo (
+        dummyVideo,
+        prompt.getText(),
+        PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT,
+        PtV2AProcessor::DEFAULT_SEED,
+        &generationError
+    );
+    
+    //==========================================================================
+    // Step 4: Handle generation result
+    //==========================================================================
+    if (outputPath.isEmpty())
+    {
+        juce::Logger::writeToLog ("ERROR: Audio generation failed (dummy video)");
+        juce::Logger::writeToLog ("Error: " + generationError);
+        
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Generation Failed",
+            "Failed to generate audio:\n\n" + generationError,
+            "OK"
+        );
+        
+        renderDummyButton.setEnabled (true);
+        renderDummyButton.setButtonText ("Render (dummy video)");
+        return;
+    }
+    
+    //==========================================================================
+    // Success! Background process started
+    //==========================================================================
+    juce::Logger::writeToLog ("=== Generation Process Started (Dummy Video) ===");
+    juce::Logger::writeToLog ("Process running in background: " + outputPath);
+    
+    juce::AlertWindow::showMessageBoxAsync (
+        juce::MessageBoxIconType::InfoIcon,
+        "Audio Generation Started",
+        "Audio generation started in background!\n\n"
+        "Video: test_video.mp4 (from temp/pt_v2a/)\n"
+        "Prompt: " + prompt.getText() + "\n\n"
+        "The process will:\n"
+        "1. Generate audio via MMAudio API (~60 seconds)\n"
+        "2. Import audio to Pro Tools timeline via PTSL\n\n"
+        "⏳ Please wait 1-2 minutes, then check the Pro Tools timeline\n"
+        "    for the new audio track.",
+        "OK"
+    );
+    
+    // Restore button state
+    renderDummyButton.setEnabled (true);
+    renderDummyButton.setButtonText ("Render (dummy video)");
+}
+
+//==============================================================================
 // Event Handler - Open Log Button Click
 //==============================================================================
 void PtV2AEditor::handleOpenLogButtonClicked()
@@ -330,14 +453,22 @@ void PtV2AEditor::resized()
     // 10px spacing between components
     r.removeFromTop (10);
     
-    // Render button: 160px wide, 28px height, left-aligned
+    // Button row: Render buttons and Open Log button
     auto buttonRow = r.removeFromTop (28);
+    
+    // Render Audio button: 160px wide, left-aligned
     renderButton.setBounds (buttonRow.removeFromLeft (160));
     
     // 10px spacing between buttons
     buttonRow.removeFromLeft (10);
     
-    // Open Log button: 120px wide, same height, next to render button
+    // Render (dummy video) button: 200px wide, next to Render Audio
+    renderDummyButton.setBounds (buttonRow.removeFromLeft (200));
+    
+    // 10px spacing between buttons
+    buttonRow.removeFromLeft (10);
+    
+    // Open Log button: 120px wide, at the end
     openLogButton.setBounds (buttonRow.removeFromLeft (120));
     
     // Future components can be added below by continuing to use r.removeFromTop()

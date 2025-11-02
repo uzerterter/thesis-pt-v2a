@@ -693,9 +693,16 @@ async def generate_audio(
     duration: Optional[float] = Form(None),
     model_name: str = Form("large_44k_v2"),
     num_steps: int = Form(25),
-    cfg_strength: float = Form(4.5)
+    cfg_strength: float = Form(4.5),
+    output_format: str = Form("flac")  # "flac" or "wav"
 ):
-    """Generate audio from video, returns FLAC audio file, like in mmaudio demo.py"""
+    """
+    Generate audio from video, returns audio file in requested format.
+    
+    Args:
+        output_format: "flac" (default, lossless compression) or "wav" (uncompressed PCM)
+                      Use "wav" for Pro Tools PTSL compatibility (avoids client-side conversion)
+    """
     try:
         # Save uploaded video to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
@@ -754,28 +761,61 @@ async def generate_audio(
         # Save audio exactly like demo.py
         audio = audios.float().cpu()[0]
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f"audio_{timestamp}_{seed}.flac"  # Use FLAC like demo.py
-        output_path = CACHE_DIR / output_filename
         
-        # Use torchaudio.save exactly like demo.py (no backend parameter)
-        torchaudio.save(output_path, audio, seq_cfg.sampling_rate)
+        # Validate output format
+        output_format = output_format.lower()
+        if output_format not in ["flac", "wav"]:
+            raise HTTPException(status_code=400, detail=f"Invalid output_format: {output_format}. Must be 'flac' or 'wav'")
         
-        logger.info(f"Audio file saved as {output_path}")
+        # Save as FLAC first (like demo.py)
+        flac_filename = f"audio_{timestamp}_{seed}.flac"
+        flac_path = CACHE_DIR / flac_filename
+        torchaudio.save(flac_path, audio, seq_cfg.sampling_rate)
+        logger.info(f"Audio file saved as {flac_path}")
+        
+        # Convert to WAV if requested (for Pro Tools PTSL compatibility)
+        if output_format == "wav":
+            logger.info("Converting FLAC to WAV for Pro Tools compatibility...")
+            convert_start = time.time()
+            
+            wav_filename = f"audio_{timestamp}_{seed}.wav"
+            wav_path = CACHE_DIR / wav_filename
+            
+            # Use torchaudio for fast conversion (stays in PyTorch, no disk I/O overhead)
+            # Load FLAC and save as WAV (24-bit PCM for Pro Tools professional quality)
+            waveform, sample_rate = torchaudio.load(flac_path)
+            torchaudio.save(wav_path, waveform, sample_rate, encoding="PCM_S", bits_per_sample=24)
+            
+            convert_time = time.time() - convert_start
+            logger.info(f"Converted to WAV in {convert_time:.2f}s")
+            
+            # Use WAV as final output, schedule both files for cleanup
+            final_path = wav_path
+            final_filename = wav_filename
+            media_type = "audio/wav"
+            
+            cleanup_file_after_delay(flac_path, delay_minutes=5)
+            cleanup_file_after_delay(wav_path, delay_minutes=5)
+        else:
+            # Use FLAC as final output
+            final_path = flac_path
+            final_filename = flac_filename
+            media_type = "audio/flac"
+            
+            cleanup_file_after_delay(flac_path, delay_minutes=5)
 
         # Clean up temporary video file
         tmp_video_path.unlink()
         
-        # Schedule cleanup of generated audio file after 5 minutes
-        cleanup_file_after_delay(output_path, delay_minutes=5)
-        
         return FileResponse(
-            output_path,
-            media_type="audio/flac",  # FLAC instead of WAV
-            filename=output_filename,
+            final_path,
+            media_type=media_type,
+            filename=final_filename,
             headers={
                 "X-Generation-Time": str(generation_time),
                 "X-Duration": str(video_info.duration_sec),
-                "X-Seed": str(seed)
+                "X-Seed": str(seed),
+                "X-Output-Format": output_format
             }
         )
         

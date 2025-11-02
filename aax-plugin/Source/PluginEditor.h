@@ -96,9 +96,19 @@ private:
      *   - "Checking API..." (validating connection)
      *   - "Generating..." (processing, disabled)
      * 
-     * TODO Phase 2: Add cancel functionality for long operations
+     * TODO Add cancel functionality for long operations
      */
     juce::TextButton renderButton { "Render Audio" };
+    
+    /**
+     * Button to trigger audio generation with dummy video (for presentation)
+     * Uses predefined test video file instead of Pro Tools timeline extraction
+     * 
+     * States:
+     *   - "Render (dummy video)" (default, ready)
+     *   - "Generating..." (processing, disabled)
+     */
+    juce::TextButton renderDummyButton { "Render (dummy video)" };
     
     /**
      * Button to open log file in default text editor
@@ -126,6 +136,18 @@ private:
      * TODO Phase 3: Extract video from Pro Tools timeline instead of file selector
      */
     void handleRenderButtonClicked();
+    
+    /**
+     * Handle render dummy button click - simplified workflow for presentation
+     * 
+     * Steps:
+     *   1. Validate API availability
+     *   2. Use predefined test video (sora_galloping.mp4)
+     *   3. Generate audio and import to Pro Tools
+     * 
+     * @note Skips Pro Tools timeline extraction - uses hardcoded video path
+     */
+    void handleRenderDummyButtonClicked();
     
     /**
      * Handle open log button click

@@ -662,6 +662,14 @@ Examples:
         help='CFG strength for prompt guidance (default: 4.5)'
     )
     
+    parser.add_argument(
+        '--output-format',
+        type=str,
+        choices=['flac', 'wav'],
+        default='wav',  # Default to WAV for Pro Tools compatibility
+        help='Output audio format: "flac" (smaller) or "wav" (Pro Tools compatible, default)'
+    )
+    
     # API options
     parser.add_argument(
         '--api-url',
@@ -838,13 +846,19 @@ def generate_audio(
     duration: Optional[float] = None,
     num_steps: int = 25,
     cfg_strength: float = 4.5,
+    output_format: str = "wav",
     output_path: Optional[str] = None,
     use_temp: bool = False,
     timeout: int = 300,
     quiet: bool = False,
     verbose: bool = False
 ) -> Optional[str]:
-    """Generate audio using the mmaudio Standalone API"""
+    """
+    Generate audio using the mmaudio Standalone API
+    
+    Args:
+        output_format: "flac" or "wav" (default: "wav" for Pro Tools compatibility)
+    """
     
     if not os.path.exists(video_path):
         if not quiet:
@@ -870,7 +884,8 @@ def generate_audio(
         "seed": seed,
         "model_name": model_name,
         "num_steps": num_steps,
-        "cfg_strength": cfg_strength
+        "cfg_strength": cfg_strength,
+        "output_format": output_format
     }
     
     if duration is not None:
@@ -913,11 +928,12 @@ def generate_audio(
             # Ensure output directory exists
             final_output_path.parent.mkdir(parents=True, exist_ok=True)
         else:
-            # Auto-generate output filename
+            # Auto-generate output filename with correct extension
             output_dir = create_output_directory(use_temp=use_temp)
             timestamp = int(time.time())
-            # MMAudio API returns FLAC - saved as FLAC, converted to WAV by PTSL client if needed
-            output_filename = f"generated_audio_{timestamp}_{seed}.flac"
+            # File extension matches output_format (server handles conversion)
+            file_ext = output_format.lower()
+            output_filename = f"generated_audio_{timestamp}_{seed}.{file_ext}"
             final_output_path = output_dir / output_filename
 
         # Save audio file
@@ -1100,6 +1116,7 @@ def main():
             duration=args.duration,
             num_steps=args.steps,
             cfg_strength=args.cfg_strength,
+            output_format=args.output_format,
             output_path=args.output,
             use_temp=args.temp,
             timeout=args.timeout,

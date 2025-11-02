@@ -95,6 +95,7 @@ def import_audio_to_pro_tools(
         return False
     
     # Convert FLAC to WAV if needed (PTSL limitation)
+    # Note: If using output_format="wav" in API call, this conversion is skipped
     audio_path = Path(audio_path)
     actual_path = audio_path
     
@@ -104,14 +105,27 @@ def import_audio_to_pro_tools(
             print("Install with: pip install soundfile", file=sys.stderr)
             return False
         
-        print(f"Converting FLAC to WAV (PTSL requirement)...")
+        print(f"⚠️  WARNING: Converting FLAC to WAV client-side (slow!)")
+        print(f"   Recommendation: Use output_format='wav' in API call for faster import")
+        import time
+        convert_start = time.time()
+        
         try:
             # Read FLAC
+            read_start = time.time()
             data, samplerate = sf.read(str(audio_path))
+            read_time = time.time() - read_start
+            print(f"  Read FLAC: {read_time:.2f}s")
             
             # Write WAV (24-bit PCM)
+            write_start = time.time()
             wav_path = audio_path.with_suffix('.wav')
             sf.write(str(wav_path), data, samplerate, subtype='PCM_24')
+            write_time = time.time() - write_start
+            print(f"  Write WAV: {write_time:.2f}s")
+            
+            total_convert = time.time() - convert_start
+            print(f"  Total conversion: {total_convert:.2f}s")
             
             actual_path = wav_path
             print(f"Converted to: {wav_path}")
@@ -119,6 +133,8 @@ def import_audio_to_pro_tools(
         except Exception as e:
             print(f"ERROR: FLAC conversion failed: {e}", file=sys.stderr)
             return False
+    elif audio_path.suffix.lower() == '.wav':
+        print(f"✅ Audio already in WAV format (no conversion needed)")
     
     # Convert to absolute path (PTSL requires absolute paths)
     actual_path = actual_path.absolute()
@@ -141,16 +157,22 @@ def import_audio_to_pro_tools(
         return False
     
     # Import using py-ptsl
+    import time
+    ptsl_start = time.time()
+    
     try:
         # py-ptsl expects address in "host:port" format
         address = f"{host}:{port}"
         print(f"Connecting to Pro Tools at {address}...")
         
+        connect_start = time.time()
         with open_engine(
             company_name=company_name,
             application_name=app_name,
             address=address
         ) as engine:
+            connect_time = time.time() - connect_start
+            print(f"  Connected in {connect_time:.2f}s")
             
             print(f"Importing audio to Pro Tools...")
             print(f"  File: {actual_path}")
@@ -179,8 +201,14 @@ def import_audio_to_pro_tools(
                 import_type=pt.Audio,     # Audio file import (not Session)
                 audio_data=audio_data
             )
-            engine.client.run(import_op)
             
+            import_start = time.time()
+            engine.client.run(import_op)
+            import_time = time.time() - import_start
+            print(f"  PTSL import operation: {import_time:.2f}s")
+            
+            total_ptsl = time.time() - ptsl_start
+            print(f"  Total PTSL time: {total_ptsl:.2f}s")
             print("✅ Audio successfully imported to Pro Tools!")
             return True
             
