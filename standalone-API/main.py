@@ -28,7 +28,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-# Add MMAudio to path - adjust this path as needed
+# Add MMAudio path to sys.path for imports
 MMAUDIO_PATH = Path("/workspace/model-tests/repos/MMAudio")
 sys.path.insert(0, str(MMAUDIO_PATH))
 
@@ -43,7 +43,7 @@ except ImportError as e:
     logging.error("Please check MMAUDIO_PATH in the script")
     sys.exit(1)
 
-# Configure logging with custom handler to capture logs
+# Configure logging with custom handler to capture logs (use logging from mmaudio.eval_utils)
 setup_eval_logging()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ class SmartVideoCache:
     def _background_ttl_cleanup(self):
         """Background thread for periodic TTL cleanup (runs even when API is idle)"""
         # Run cleanup every 15 minutes or 1/6 of TTL (whichever is larger)
-        cleanup_interval = max(self.ttl_seconds / 6, 300)  # Minimum 5 minutes
+        cleanup_interval = max(self.ttl_seconds / 6, 900)  # Minimum 5 minutes
         
         while not self._stop_cleanup.is_set():
             self._stop_cleanup.wait(cleanup_interval)
@@ -331,8 +331,8 @@ class SmartVideoCache:
             logger.info("🛑 TTL cleanup thread stopped")
 
 # Cache Configuration (Environment Variables supported)
-VIDEO_CACHE_MAX_GB = float(os.getenv('VIDEO_CACHE_MAX_GB', '32'))  # 32GB default
-VIDEO_CACHE_TTL_MIN = int(os.getenv('VIDEO_CACHE_TTL_MIN', '90'))   # 90 minutes default
+VIDEO_CACHE_MAX_GB = float(os.getenv('VIDEO_CACHE_MAX_GB', '32'))  # 32GB default max size
+VIDEO_CACHE_TTL_MIN = int(os.getenv('VIDEO_CACHE_TTL_MIN', '60'))   # 60 minutes default TTL
 
 # Initialize caches
 MODEL_CACHE = {}    # VRAM: {model_name: (net, feature_utils, seq_cfg)}
@@ -341,7 +341,7 @@ CACHE_DIR = Path("./cache")  # Disk: temporary audio files
 CACHE_DIR.mkdir(exist_ok=True)
 
 # Cache cleanup configuration
-CACHE_RETENTION_HOURS = 2  # Delete files older than 2 hours
+CACHE_RETENTION_HOURS = 2  # Delete audio files older than 2 hours
 CLEANUP_INTERVAL_MINUTES = 30  # Run cleanup every 30 minutes
 
 def cleanup_old_cache_files():
@@ -369,6 +369,8 @@ def schedule_cleanup():
 cleanup_thread = threading.Thread(target=schedule_cleanup, daemon=True)
 cleanup_thread.start()
 
+
+# ========== FASTAPI APPLICATION ==========
 app = FastAPI(
     title="MMAudio Standalone API",
     description="High-performance video-to-audio generation API",
@@ -380,7 +382,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -416,7 +418,7 @@ def get_cached_model(model_name: str = 'large_44k_v2') -> tuple[MMAudio, Feature
         raise ValueError(f'Unknown model variant: {model_name}')
     
     model: ModelConfig = all_model_cfg[model_name]
-    model.download_if_needed()  # Download weights if not present
+    model.download_if_needed()  # Download weights if not present (logic from mmaudio demo.py)
     seq_cfg = model.seq_cfg
 
     # Step 1: Load main MMAudio network into VRAM  (logic from mmaudio demo.py)
@@ -508,6 +510,8 @@ def load_video_optimized(video_path: Path, duration_sec: float):
     
     return video_info
 
+
+# ========== API ENDPOINTS ==========
 @app.get("/")
 async def root():
     """API health check"""
@@ -691,7 +695,7 @@ async def generate_audio(
     num_steps: int = Form(25),
     cfg_strength: float = Form(4.5)
 ):
-    """Generate audio from video"""
+    """Generate audio from video, returns FLAC audio file, like in mmaudio demo.py"""
     try:
         # Save uploaded video to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
@@ -779,6 +783,8 @@ async def generate_audio(
         logger.error(f"Generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ========== RUN APPLICATION ==========
 if __name__ == "__main__":
     logger.info("Starting MMAudio Standalone API...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

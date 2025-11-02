@@ -39,18 +39,35 @@ curl -X POST "http://localhost:8000/generate" \
 ## API Endpoints
 
 ### `GET /`
+
 Health check endpoint
 
 ### `GET /models`
+
 List available MMAudio models and currently loaded models
 
 ### `POST /cache/stats`
+
 View Cache stats (RAM, VRAM, ...)
 
 ### `POST /generate`
+
 Generate audio from video
 
+### `GET /cache/stats`
+
+Detailed cache statistics and memory usage
+
+### `POST /cache/clear`
+
+Clear video cache (preserve models)
+
+### `POST /cache/clear-all`
+
+Full cache reset including models
+
 **Parameters:**
+
 - `video` (file): Video file to process
 - `prompt` (string): Text description of desired audio
 - `negative_prompt` (string, optional): What to avoid in audio
