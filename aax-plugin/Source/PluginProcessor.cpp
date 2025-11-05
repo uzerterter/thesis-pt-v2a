@@ -368,17 +368,27 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // Build command - simple and clean!
     // Embedded Python has everything: py-ptsl in site-packages, ptsl_integration in site-packages
     // No PYTHONPATH needed - the plugin is completely self-contained
+    
+    // Create log file for Python stderr output
+    auto logDir = getLogFile().getParentDirectory();
+    auto pythonLogFile = logDir.getChildFile ("python_stderr.log");
+    juce::String pythonLogPath = pythonLogFile.getFullPathName();
+    
+    juce::Logger::writeToLog ("Python stderr will be logged to: " + pythonLogPath);
+    
     juce::String command;
     
 #if JUCE_WINDOWS
-    // Windows: Just cd to script directory and run
+    // Windows: Set UTF-8 encoding for Python output, then run
     command = "cmd /c \"";
+    command += "set PYTHONIOENCODING=utf-8 && ";    // Force UTF-8 encoding for stdout/stderr
     command += "cd /d \"" + scriptPath + "\" && ";  // Change to script directory
     command += "\"" + pythonExe + "\" ";            // Embedded Python executable
     command += "\"" + scriptFile.getFileName() + "\"";  // Script (we're in the right dir)
 #else
-    // macOS/Linux: Same simple approach
-    command = "cd \"" + scriptPath + "\" && ";
+    // macOS/Linux: Same simple approach with UTF-8
+    command = "export PYTHONIOENCODING=utf-8 && ";
+    command += "cd \"" + scriptPath + "\" && ";
     command += "\"" + pythonExe + "\" ";
     command += "\"" + scriptFile.getFileName() + "\"";
 #endif
@@ -394,8 +404,13 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
             command += args[i];
     }
     
+    // Redirect both stdout and stderr to log file
+    // This prevents "OSError: [Errno 22] Invalid argument" on stdout
 #if JUCE_WINDOWS
+    command += " >\"" + pythonLogPath + "\" 2>&1";  // Redirect stdout and stderr to same file
     command += "\"";  // Close cmd /c quote
+#else
+    command += " >\"" + pythonLogPath + "\" 2>&1";  // Redirect stdout and stderr to same file
 #endif
     
     juce::Logger::writeToLog ("Executing command: " + command);
@@ -418,6 +433,27 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     
     juce::Logger::writeToLog ("✓ Python process started successfully (running in background)");
     juce::Logger::writeToLog ("   The script will generate audio and import to Pro Tools automatically.");
+    
+    // Wait briefly to capture any immediate errors from Python startup
+    juce::Thread::sleep (500);  // 500ms to catch import errors etc.
+    
+    // Try to read any immediate output/errors
+    if (!apiProcess.isRunning())
+    {
+        juce::String error = "Python process terminated immediately after start\n";
+        error += "This usually means:\n";
+        error += "  - Import error (missing modules)\n";
+        error += "  - Syntax error in script\n";
+        error += "  - Python path issue\n\n";
+        error += "Check the log file for details.";
+        
+        juce::Logger::writeToLog ("ERROR: " + error);
+        if (errorMessage != nullptr)
+            *errorMessage = error;
+        return {};
+    }
+    
+    juce::Logger::writeToLog ("✓ Process still running after 500ms - looks good!");
     juce::Logger::writeToLog ("   Check Pro Tools timeline in ~60-120 seconds for the imported audio.");
     
     // Return success message immediately

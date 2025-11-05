@@ -375,10 +375,10 @@ void PtV2AEditor::handleRenderDummyButtonClicked()
         "Video: test_video.mp4 (from temp/pt_v2a/)\n"
         "Prompt: " + prompt.getText() + "\n\n"
         "The process will:\n"
-        "1. Generate audio via MMAudio API (~60 seconds)\n"
+        "1. Generate audio via MMAudio API \n"
         "2. Import audio to Pro Tools timeline via PTSL\n\n"
         "⏳ Please wait 1-2 minutes, then check the Pro Tools timeline\n"
-        "    for the new audio track.",
+        "    for a new audio track.",
         "OK"
     );
     

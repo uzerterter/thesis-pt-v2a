@@ -134,7 +134,7 @@ def import_audio_to_pro_tools(
             print(f"ERROR: FLAC conversion failed: {e}", file=sys.stderr)
             return False
     elif audio_path.suffix.lower() == '.wav':
-        print(f"✅ Audio already in WAV format (no conversion needed)")
+        print(f"[OK] Audio already in WAV format (no conversion needed)")
     
     # Convert to absolute path (PTSL requires absolute paths)
     actual_path = actual_path.absolute()
@@ -209,7 +209,7 @@ def import_audio_to_pro_tools(
             
             total_ptsl = time.time() - ptsl_start
             print(f"  Total PTSL time: {total_ptsl:.2f}s")
-            print("✅ Audio successfully imported to Pro Tools!")
+            print("[SUCCESS] Audio successfully imported to Pro Tools!")
             return True
             
     except Exception as e:
