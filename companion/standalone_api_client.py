@@ -234,6 +234,13 @@ Examples:
         help='Path to audio file (for import_audio action)'
     )
     
+    # Audio import timecode position
+    parser.add_argument(
+        '--timecode',
+        type=str,
+        help='Timecode position for import_audio action (e.g., "00:00:07:00")'
+    )
+    
     # Trimming parameters
     parser.add_argument(
         '--start-time',
@@ -485,13 +492,21 @@ def main():
             sys.exit(1)
         
         print(f"Audio path: {args.audio_path}", file=sys.stderr)
+        
+        # Get timecode if provided
+        timecode = args.timecode if hasattr(args, 'timecode') and args.timecode else None
+        if timecode:
+            print(f"Import timecode: {timecode}", file=sys.stderr)
+        else:
+            print(f"Import timecode: Not specified (will use session start)", file=sys.stderr)
+        
         sys.stderr.flush()
         
         # Import to Pro Tools timeline
         try:
             success = import_audio_to_pro_tools(
                 audio_path=args.audio_path,
-                location="SessionStart"  # Import at session start
+                timecode=timecode  # Pass timecode to import function
             )
             
             result = {

@@ -43,6 +43,7 @@ except ImportError:
 def import_audio_to_pro_tools(
     audio_path: str,
     location: str = "SessionStart",  # For API compatibility with old version (currently unused)
+    timecode: str = None,  # Timecode position (e.g., "00:00:07:00")
     company_name: str = "Master Thesis",
     app_name: str = "PT V2A Plugin",
     host: str = "localhost",
@@ -53,14 +54,16 @@ def import_audio_to_pro_tools(
     
     Features:
         - FLAC → WAV conversion (PTSL requires WAV)
+        - Timecode-based positioning (imports at specific timeline position)
         - Connection management
         - Error handling
     
     Args:
         audio_path (str): Path to audio file (WAV or FLAC)
         location (str): Timeline position - kept for API compatibility with v1
-                       Currently fixed to SessionStart (sample 0)
-                       Future: Could use py-ptsl's timecode positioning
+                       Currently unused (use timecode parameter instead)
+        timecode (str): Timecode position in "HH:MM:SS:FF" format (e.g., "00:00:07:00")
+                       If None, imports at session start (00:00:00:00)
         company_name (str): for PTSL logs
         app_name (str): for PTSL logs
         host (str): PTSL server hostname (default: localhost)
@@ -70,18 +73,19 @@ def import_audio_to_pro_tools(
         bool: True if import succeeded, False otherwise
         
     Example:
-        >>> # Simple usage
+        >>> # Simple usage (imports at session start)
         >>> success = import_audio_to_pro_tools("C:/audio/generated.flac")
 
-        >>> # With location parameter
+        >>> # Import at specific timeline position
         >>> success = import_audio_to_pro_tools(
         >>>     "C:/audio/file.wav",
-        >>>     location="SessionStart"
+        >>>     timecode="00:00:07:00"  # Import at 7 seconds
         >>> )
         
         >>> # With custom names
         >>> success = import_audio_to_pro_tools(
         >>>     "C:/audio/file.wav",
+        >>>     timecode="00:01:30:15",
         >>>     company_name="My Studio",
         >>>     app_name="Audio Tool"
         >>> )
@@ -177,7 +181,11 @@ def import_audio_to_pro_tools(
             print(f"Importing audio to Pro Tools...")
             print(f"  File: {actual_path}")
             
-            # Import audio to new track at session start in new track
+            # Determine import timecode position
+            import_timecode = timecode if timecode else "00:00:00:00"
+            print(f"  Position: {import_timecode}")
+            
+            # Import audio to new track at specified timecode position
             # Note: Using forward slashes even on Windows (PTSL requirement)
             file_path = str(actual_path).replace('\\', '/')
             
@@ -186,7 +194,7 @@ def import_audio_to_pro_tools(
             location_data = pt.SpotLocationData(
                 location_type=pt.Start,
                 location_options=pt.TimeCode,
-                location_value="00:00:00:00"
+                location_value=import_timecode
             )
             audio_data = pt.AudioData(
                 file_list=[file_path],

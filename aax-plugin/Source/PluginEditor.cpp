@@ -588,6 +588,10 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         juce::Logger::writeToLog ("Timeline selection SUCCESS: " + inTime + " - " + outTime);
         juce::Logger::writeToLog ("Duration: " + juce::String (durationSeconds, 2) + "s");
         
+        // Store timeline in-time for audio import positioning
+        timelineInTime = inTime;
+        juce::Logger::writeToLog ("Stored timeline in-time: " + timelineInTime);
+        
         // Validate duration: 5-12 seconds
         if (durationSeconds < 5.0f)
         {
@@ -848,7 +852,7 @@ void PtV2AEditor::startAudioImport (const juce::String& audioPath)
         return;
     }
     
-    // Build command: python script.py --action import_audio --audio-path <path>
+    // Build command: python script.py --action import_audio --audio-path <path> --timecode <tc>
     juce::StringArray commandArray;
     commandArray.add (pythonExe);
     commandArray.add ("-X");
@@ -858,6 +862,18 @@ void PtV2AEditor::startAudioImport (const juce::String& audioPath)
     commandArray.add ("import_audio");
     commandArray.add ("--audio-path");
     commandArray.add (audioPath);
+    
+    // Add timecode position if available
+    if (timelineInTime.isNotEmpty())
+    {
+        commandArray.add ("--timecode");
+        commandArray.add (timelineInTime);
+        juce::Logger::writeToLog ("Import position: " + timelineInTime);
+    }
+    else
+    {
+        juce::Logger::writeToLog ("Warning: No timeline position available, importing at session start");
+    }
     
     juce::Logger::writeToLog ("Starting PTSL import process...");
     juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));

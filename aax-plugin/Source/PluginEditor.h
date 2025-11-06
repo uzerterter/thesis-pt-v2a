@@ -258,6 +258,9 @@ private:
     juce::String currentVideoPath;
     juce::String currentPrompt;
     
+    /** Timeline selection timecode (stored for audio import positioning) */
+    juce::String timelineInTime;  // e.g., "00:00:07:00"
+    
     /** Timeout for PTSL calls (milliseconds) */
     static constexpr int PTSL_TIMEOUT_MS = 10000;  // 10 seconds
     
