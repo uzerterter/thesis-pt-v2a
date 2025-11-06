@@ -345,6 +345,28 @@ public:
         float maxDuration = 10.0f,
         juce::String* errorMessage = nullptr
     );
+    
+    /**
+     * Get video file duration using FFprobe
+     * Queries video duration via Python script (calls FFprobe)
+     * 
+     * @param videoPath     Path to video file
+     * @param errorMessage  [OUT] Error details on failure (optional)
+     * @return Video duration in seconds, or -1.0 on failure
+     * 
+     * Example:
+     *   juce::String error;
+     *   float duration = processor.getVideoDuration("C:/video.mp4", &error);
+     *   if (duration < 0.0f) {
+     *       showError("Failed to get duration: " + error);
+     *   } else {
+     *       DBG("Video is " << duration << " seconds long");
+     *   }
+     */
+    float getVideoDuration(
+        const juce::String& videoPath,
+        juce::String* errorMessage = nullptr
+    );
 
 private:
     //==============================================================================

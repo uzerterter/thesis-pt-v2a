@@ -62,11 +62,21 @@ def get_video_file_from_protools(
                     'error': 'No video files found in Pro Tools session'
                 }
             
+            # Convert FileLocation objects to strings
+            # PTSL returns FileLocation objects which have .path attribute
+            video_paths = []
+            for file_loc in video_files:
+                if hasattr(file_loc, 'path'):
+                    video_paths.append(file_loc.path)
+                else:
+                    # Fallback: try to convert to string
+                    video_paths.append(str(file_loc))
+            
             # Return first video file (most common case)
             return {
                 'success': True,
-                'video_path': video_files[0],
-                'video_files': video_files,
+                'video_path': video_paths[0] if video_paths else None,
+                'video_files': video_paths,
                 'error': None
             }
             

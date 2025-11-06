@@ -93,32 +93,42 @@ def get_video_timeline_selection(
         from ptsl import open_engine
         import ptsl.PTSL_pb2 as pt
         
+        # Store result before closing connection to avoid hanging in context manager
+        result = None
+        
         # Connect to Pro Tools via PTSL
         with open_engine(
             company_name=company_name,
             application_name=app_name
         ) as engine:
             # Get timeline selection in TimeCode format
-            selection = engine.get_timeline_selection(pt.TimeCode)
+            # Returns: Tuple[str, str] = (in_time, out_time)
+            in_time, out_time = engine.get_timeline_selection(pt.TimeCode)
             
-            # Extract In/Out timecodes
-            in_time = selection.in_time
-            out_time = selection.out_time
+            # Get frame rate for accurate timecode conversion
+            # Pro Tools common frame rates: 23.976, 24, 25, 29.97, 30
+            # Default to 30 fps if not available
+            fps = 30.0  # Default to 30 fps (most common)
             
             # Convert to seconds for duration calculation
-            in_seconds = timecode_to_seconds(in_time)
-            out_seconds = timecode_to_seconds(out_time)
+            in_seconds = timecode_to_seconds(in_time, fps)
+            out_seconds = timecode_to_seconds(out_time, fps)
             duration_seconds = out_seconds - in_seconds
             
-            return {
+            # Build result while connection is open
+            result = {
                 'success': True,
                 'in_time': in_time,
                 'out_time': out_time,
                 'in_seconds': in_seconds,
                 'out_seconds': out_seconds,
                 'duration_seconds': duration_seconds,
+                'fps': fps,
                 'error': None
             }
+        
+        # Connection closed, return immediately
+        return result
             
     except ImportError as e:
         return {
@@ -128,6 +138,7 @@ def get_video_timeline_selection(
             'in_seconds': None,
             'out_seconds': None,
             'duration_seconds': None,
+            'fps': None,
             'error': f'py-ptsl not available: {e}'
         }
     except Exception as e:
@@ -138,5 +149,6 @@ def get_video_timeline_selection(
             'in_seconds': None,
             'out_seconds': None,
             'duration_seconds': None,
+            'fps': None,
             'error': f'PTSL error: {str(e)}'
         }

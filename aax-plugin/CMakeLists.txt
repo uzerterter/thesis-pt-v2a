@@ -76,10 +76,42 @@ target_sources(pt_v2a PRIVATE         # only for this target
 )
 
 # ==============================================================================
+# Python Scripts Sync (BEFORE embedding Resources)
+# ==============================================================================
+# Path configuration
+set(COMPANION_DIR ${CMAKE_SOURCE_DIR}/../companion)
+set(RESOURCES_DIR ${CMAKE_SOURCE_DIR}/Resources)
+set(RESOURCES_PYTHON_DIR ${RESOURCES_DIR}/python)
+set(RESOURCES_PYTHON_SCRIPTS ${RESOURCES_PYTHON_DIR}/Scripts)
+set(RESOURCES_PYTHON_SITEPACKAGES ${RESOURCES_PYTHON_DIR}/Lib/site-packages)
+
+# STEP 1: Sync Python scripts from companion/ to Resources/ (runs FIRST)
+add_custom_command(TARGET pt_v2a_AAX PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Syncing Python scripts from companion/ to Resources/..."
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RESOURCES_PYTHON_SCRIPTS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RESOURCES_PYTHON_SITEPACKAGES}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${COMPANION_DIR}/standalone_api_client.py
+        ${RESOURCES_PYTHON_SCRIPTS}/standalone_api_client.py
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${COMPANION_DIR}/ptsl_integration
+        ${RESOURCES_PYTHON_SITEPACKAGES}/ptsl_integration
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${COMPANION_DIR}/api
+        ${RESOURCES_PYTHON_SITEPACKAGES}/api
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${COMPANION_DIR}/video
+        ${RESOURCES_PYTHON_SITEPACKAGES}/video
+    COMMENT "Syncing companion/ Python modules to Resources/ before embedding"
+    VERBATIM
+)
+
+# ==============================================================================
 # Embed Resources Folder
 # ==============================================================================
 # JUCE's COPY_PLUGIN_AFTER_BUILD does NOT automatically copy the Resources/ folder!
 # We must explicitly add a post-build command to copy it into the .aaxplugin bundle.
+# STEP 2: Copy Resources/ to plugin bundle (runs AFTER Python sync)
 add_custom_command(TARGET pt_v2a_AAX POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Copying Resources folder to plugin bundle..."
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -108,70 +140,33 @@ target_link_libraries(pt_v2a PRIVATE
 )
 
 # ==============================================================================
-# Python Scripts Integration
+# Python Scripts Integration - NOTE: Moved to PRE_BUILD above!
 # ==============================================================================
-# Strategy: Copy Python scripts from companion/ into Resources/ at build time
-# This embeds all Python dependencies directly into the plugin bundle
+# Strategy: Python scripts are now synced during pt_v2a_AAX PRE_BUILD phase
+# (see lines 78-103 above) to ensure they're always up-to-date when building
+# the AAX target, which is what you typically use during development.
 #
 # DEVELOPMENT WORKFLOW:
-#   Use symbolic links to avoid manual syncing during development:
+#   Just build the AAX target - Python scripts sync automatically:
+#     cmake --build . --config Debug --target pt_v2a_AAX
 #   
+#   The PRE_BUILD command syncs these modules from companion/ to Resources/:
+#     - standalone_api_client.py → Scripts/
+#     - ptsl_integration/ → site-packages/
+#     - api/ → site-packages/
+#     - video/ → site-packages/
+#
+# ALTERNATIVE (symbolic links for live editing):
 #   Windows CMD:
 #     cd Resources\python\Scripts
 #     mklink standalone_api_client.py ..\..\..\..\companion\standalone_api_client.py
-#     cd Resources
-#     mklink /D ptsl_integration ..\..\companion\ptsl_integration
+#     cd Resources\python\Lib\site-packages
+#     mklink /D ptsl_integration ..\..\..\..\companion\ptsl_integration
+#     mklink /D api ..\..\..\..\companion\api
+#     mklink /D video ..\..\..\..\companion\video
 #
 #   Benefits: Edit companion/ files directly, changes immediately available
-#   
-# PRODUCTION BUILD:
-#   Delete symlinks before building release → CMake will copy real files
-#   This ensures the plugin bundle is fully self-contained
-
-# Path configuration
-set(COMPANION_DIR ${CMAKE_SOURCE_DIR}/../companion)
-set(RESOURCES_DIR ${CMAKE_SOURCE_DIR}/Resources)
-set(RESOURCES_PYTHON_DIR ${RESOURCES_DIR}/python)
-set(RESOURCES_PYTHON_SCRIPTS ${RESOURCES_PYTHON_DIR}/Scripts)
-set(RESOURCES_PYTHON_SITEPACKAGES ${RESOURCES_PYTHON_DIR}/Lib/site-packages)
-
-# Ensure target directories exist before copying
-add_custom_command(
-    TARGET pt_v2a POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${RESOURCES_PYTHON_SCRIPTS}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${RESOURCES_PYTHON_SITEPACKAGES}
-    COMMENT "Creating Python resource directories..."
-)
-
-# Copy standalone_api_client.py to embedded Python Scripts directory
-# Uses copy_if_different to avoid unnecessary rebuilds
-add_custom_command(
-    TARGET pt_v2a POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${COMPANION_DIR}/standalone_api_client.py
-        ${RESOURCES_PYTHON_SCRIPTS}/standalone_api_client.py
-    COMMENT "Syncing standalone_api_client.py → embedded Python Scripts/"
-    VERBATIM
-)
-
-# Copy ptsl_integration package to embedded Python site-packages
-# Note: copy_directory always copies (no diff check), but necessary for package structure
-# Alternative: Use copy_if_different for each .py file, but harder to maintain
-add_custom_command(
-    TARGET pt_v2a POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${COMPANION_DIR}/ptsl_integration
-        ${RESOURCES_PYTHON_SITEPACKAGES}/ptsl_integration
-    COMMENT "Syncing ptsl_integration/ → embedded Python site-packages/"
-    VERBATIM
-)
-
-# Optional: Force CMake reconfigure if companion Python files change
-# Uncomment if you want automatic rebuild detection (may slow down CMake configuration)
-# file(GLOB_RECURSE COMPANION_SOURCES 
-#     CONFIGURE_DEPENDS
-#     ${COMPANION_DIR}/*.py
-# )
+#   Note: Delete symlinks before release builds to ensure self-contained plugin
 
 # ==============================================================================
 # Embedded Python Runtime

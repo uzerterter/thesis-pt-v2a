@@ -339,137 +339,93 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     
     juce::Logger::writeToLog ("Script directory: " + scriptPath);
     
-    // Build command line arguments
-    juce::StringArray args;
+    // Build command line arguments using StringArray for clean direct execution
+    juce::StringArray commandArray;
     
-    args.add (scriptFile.getFullPathName());
-    args.add ("--video");
-    args.add (videoFile.getFullPathName());
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");  // Force UTF-8 mode
+    commandArray.add (scriptFile.getFullPathName());
+    
+    commandArray.add ("--video");
+    commandArray.add (videoFile.getFullPathName());
     
     if (prompt.isNotEmpty())
     {
-        args.add ("--prompt");
-        args.add (prompt);
+        commandArray.add ("--prompt");
+        commandArray.add (prompt);
     }
     
     if (negativePrompt.isNotEmpty())
     {
-        args.add ("--negative-prompt");
-        args.add (negativePrompt);
+        commandArray.add ("--negative-prompt");
+        commandArray.add (negativePrompt);
     }
     
-    args.add ("--seed");
-    args.add (juce::String (seed));
+    commandArray.add ("--seed");
+    commandArray.add (juce::String (seed));
     
-    args.add ("--temp");               // Use temp directory for Pro Tools compatibility
-    args.add ("--import-to-protools"); // Auto-import to timeline via PTSL
-    args.add ("--quiet");              // Minimal output for parsing
+    // Generate predictable output path in temp directory
+    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    auto outputsDir = tempDir.getChildFile ("pt_v2a_outputs");
+    outputsDir.createDirectory();
     
-    // Build command - simple and clean!
-    // Embedded Python has everything: py-ptsl in site-packages, ptsl_integration in site-packages
-    // No PYTHONPATH needed - the plugin is completely self-contained
+    // Use timestamp + seed for unique filename (same as Python generates)
+    auto timestamp = juce::String (juce::Time::getCurrentTime().toMilliseconds());
+    auto outputFilename = "audio_" + timestamp + "_" + juce::String (seed) + ".wav";
+    auto outputFile = outputsDir.getChildFile (outputFilename);
     
-    // Create log file for Python stderr output
-    auto logDir = getLogFile().getParentDirectory();
-    auto pythonLogFile = logDir.getChildFile ("python_stderr.log");
-    juce::String pythonLogPath = pythonLogFile.getFullPathName();
+    commandArray.add ("--output");
+    commandArray.add (outputFile.getFullPathName());
     
-    juce::Logger::writeToLog ("Python stderr will be logged to: " + pythonLogPath);
+    commandArray.add ("--output-format");
+    commandArray.add ("wav");  // Pro Tools compatible
     
-    juce::String command;
+    // NOTE: No --import-to-protools flag - plugin will handle PTSL import async!
+    // NOTE: Removed --quiet for debugging - we want to see Python output!
+    // commandArray.add ("--quiet");  // Minimal output for parsing
     
-#if JUCE_WINDOWS
-    // Windows: Set UTF-8 encoding for Python output, then run
-    command = "cmd /c \"";
-    command += "set PYTHONIOENCODING=utf-8 && ";    // Force UTF-8 encoding for stdout/stderr
-    command += "cd /d \"" + scriptPath + "\" && ";  // Change to script directory
-    command += "\"" + pythonExe + "\" ";            // Embedded Python executable
-    command += "\"" + scriptFile.getFileName() + "\"";  // Script (we're in the right dir)
-#else
-    // macOS/Linux: Same simple approach with UTF-8
-    command = "export PYTHONIOENCODING=utf-8 && ";
-    command += "cd \"" + scriptPath + "\" && ";
-    command += "\"" + pythonExe + "\" ";
-    command += "\"" + scriptFile.getFileName() + "\"";
-#endif
-    
-    // Add arguments (skip first arg which is the script path)
-    for (int i = 1; i < args.size(); ++i)
-    {
-        command += " ";
-        // Quote arguments with spaces
-        if (args[i].containsChar (' '))
-            command += "\"" + args[i] + "\"";
-        else
-            command += args[i];
-    }
-    
-    // Redirect both stdout and stderr to log file
-    // This prevents "OSError: [Errno 22] Invalid argument" on stdout
-#if JUCE_WINDOWS
-    command += " >\"" + pythonLogPath + "\" 2>&1";  // Redirect stdout and stderr to same file
-    command += "\"";  // Close cmd /c quote
-#else
-    command += " >\"" + pythonLogPath + "\" 2>&1";  // Redirect stdout and stderr to same file
-#endif
-    
-    juce::Logger::writeToLog ("Executing command: " + command);
+    juce::Logger::writeToLog ("Starting audio generation (background process)...");
+    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
+    juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
+    juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
     
     // Execute subprocess in BACKGROUND (non-blocking)
-    // This is CRITICAL: If we wait for the Python process to finish, Pro Tools freezes
-    // and PTSL cannot respond, causing a deadlock/crash!
-    //
-    // Instead: Start Python process and return immediately.
-    // The Python script will handle everything (MMAudio API + PTSL import)
-    juce::ChildProcess apiProcess;
-    if (!apiProcess.start (command))
+    // CRITICAL: We use a fire-and-forget approach
+    // We start the process and immediately return, letting Python run independently
+    // The Editor will poll for the output file to detect completion
+    
+    // Start process with JUCE ChildProcess
+    // We allocate on heap so we can control its lifetime
+    auto* backgroundProcess = new juce::ChildProcess();
+    
+    if (!backgroundProcess->start (commandArray))
     {
-        juce::String error = "Failed to start API client process";
+        delete backgroundProcess;
+        juce::String error = "Failed to start Python process";
         juce::Logger::writeToLog ("ERROR: " + error);
         if (errorMessage != nullptr)
             *errorMessage = error;
         return {};
     }
     
-    juce::Logger::writeToLog ("✓ Python process started successfully (running in background)");
-    juce::Logger::writeToLog ("   The script will generate audio and import to Pro Tools automatically.");
+    juce::Logger::writeToLog ("✓ Python process started successfully (running independently)");
     
-    // Wait briefly to capture any immediate errors from Python startup
-    juce::Thread::sleep (500);  // 500ms to catch import errors etc.
+    // IMPORTANT: We intentionally leak this ChildProcess object!
+    // If we delete it, the process gets killed
+    // Python will run independently and we poll for the file instead
+    // The OS will clean up the process when it finishes
+    // Memory leak is acceptable here (one-time allocation per generation)
     
-    // Try to read any immediate output/errors
-    if (!apiProcess.isRunning())
-    {
-        juce::String error = "Python process terminated immediately after start\n";
-        error += "This usually means:\n";
-        error += "  - Import error (missing modules)\n";
-        error += "  - Syntax error in script\n";
-        error += "  - Python path issue\n\n";
-        error += "Check the log file for details.";
-        
-        juce::Logger::writeToLog ("ERROR: " + error);
-        if (errorMessage != nullptr)
-            *errorMessage = error;
-        return {};
-    }
-    
-    juce::Logger::writeToLog ("✓ Process still running after 500ms - looks good!");
-    juce::Logger::writeToLog ("   Check Pro Tools timeline in ~60-120 seconds for the imported audio.");
-    
-    // Return success message immediately
-    // Note: We don't know the output path yet, but the script will handle it
-    juce::String successMessage = "Audio generation started in background.\n\n";
-    successMessage += "The process will:\n";
-    successMessage += "1. Generate audio via MMAudio API (~60s)\n";
-    successMessage += "2. Import audio to Pro Tools timeline via PTSL\n\n";
-    successMessage += "Check your Pro Tools timeline in 1-2 minutes.";
+    juce::Logger::writeToLog ("Expected output file: " + outputFile.getFullPathName());
+    juce::Logger::writeToLog ("Editor will poll for file completion...");
     
     if (errorMessage != nullptr)
         *errorMessage = "";  // Clear any previous error
     
-    // Return placeholder path (actual path will be in temp folder)
-    // The Python script handles everything, so we just return success
-    return "background_generation_in_progress";
+    // Return the expected output path
+    // Editor will poll for this specific file
+    return outputFile.getFullPathName();
 }
 
 //==============================================================================
@@ -647,26 +603,48 @@ PtV2AProcessor::VideoSelectionInfo PtV2AProcessor::getVideoSelectionInfo()
         return result;
     }
     
-    // Build command: python standalone_api_client.py --action get_video_selection
-    juce::String command = "\"" + pythonExe + "\" ";
-    command += "\"" + scriptFile.getFullPathName() + "\" ";
-    command += "--action get_video_selection";
+    // Get script directory (for working directory)
+    juce::File scriptDir = scriptFile.getParentDirectory();
+    juce::String scriptPath = scriptDir.getFullPathName();
+    
+    // Create log file for Python stderr output (separate from stdout)
+    auto logDir = getLogFile().getParentDirectory();
+    auto pythonLogFile = logDir.getChildFile ("python_stderr.log");
+    juce::String pythonLogPath = pythonLogFile.getFullPathName();
+    
+    juce::Logger::writeToLog ("Python stderr will be logged to: " + pythonLogPath);
+    
+    // Build command: Direct Python call with -X utf8 flag (NO cmd.exe needed!)
+    // Python's -X utf8 flag forces UTF-8 mode without environment variables
+    juce::StringArray commandArray;
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");           // Python option prefix
+    commandArray.add ("utf8");         // Force UTF-8 mode (Python 3.7+)
+    commandArray.add (scriptFile.getFullPathName());
+    commandArray.add ("--action");
+    commandArray.add ("get_video_selection");
     
     juce::Logger::writeToLog ("Executing timeline selection command...");
-    juce::Logger::writeToLog ("Command: " + command);
+    juce::Logger::writeToLog ("Python: " + pythonExe);
+    juce::Logger::writeToLog ("Args: " + commandArray.joinIntoString (" "));
     
     // Create child process
     juce::ChildProcess process;
     
-    if (!process.start (command))
+    // Start process directly with array (NO shell wrapper!)
+    // JUCE will capture stdout/stderr automatically
+    if (!process.start (commandArray))
     {
         result.errorMessage = "Failed to start Python process";
         juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
         return result;
     }
     
-    // Wait for completion (PTSL calls can take 1-2 seconds)
-    if (!process.waitForProcessToFinish (10000))  // 10 second timeout
+    juce::Logger::writeToLog ("Python process started, waiting for completion...");
+    
+    // CRITICAL: Wait for process to finish FIRST, then read output!
+    // Reading output while process is running can cause deadlock with PTSL
+    if (!process.waitForProcessToFinish (5000))  // 5 second timeout
     {
         result.errorMessage = "Timeline selection read timed out";
         juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
@@ -678,9 +656,48 @@ PtV2AProcessor::VideoSelectionInfo PtV2AProcessor::getVideoSelectionInfo()
         return result;
     }
     
-    // Read output
-    auto output = process.readAllProcessOutput().trim();
-    juce::Logger::writeToLog ("Python output: " + output);
+    juce::Logger::writeToLog ("Process finished, reading output...");
+    
+    // NOW read output after process has completed
+    juce::String output = process.readAllProcessOutput();
+    
+    // Log output to file for debugging AND display
+    if (output.isNotEmpty())
+    {
+        pythonLogFile.replaceWithText (output);
+        juce::Logger::writeToLog ("Python output captured:");
+        juce::Logger::writeToLog (output);
+    }
+    else
+    {
+        result.errorMessage = "No output from Python script";
+        juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
+        return result;
+    }
+    
+    // Extract JSON from output (might have debug lines before/after)
+    // Look for lines starting with { (JSON response)
+    auto lines = juce::StringArray::fromLines (output);
+    juce::String jsonOutput;
+    for (const auto& line : lines)
+    {
+        if (line.trimStart().startsWith ("{"))
+        {
+            jsonOutput = line.trim();
+            break;  // Found JSON response
+        }
+    }
+    
+    if (jsonOutput.isEmpty())
+    {
+        result.errorMessage = "No JSON response found in Python output";
+        juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
+        juce::Logger::writeToLog ("Full output was: " + output);
+        return result;
+    }
+    
+    juce::Logger::writeToLog ("Extracted JSON: " + jsonOutput);
+    output = jsonOutput;  // Use extracted JSON for parsing
     
     // Parse JSON response
     auto json = juce::JSON::parse (output);
@@ -899,6 +916,95 @@ juce::String PtV2AProcessor::trimVideoSegment(
     if (errorMessage != nullptr)
         *errorMessage = errorMsg;
     return juce::String();
+}
+
+float PtV2AProcessor::getVideoDuration(
+    const juce::String& videoPath,
+    juce::String* errorMessage)
+{
+    juce::Logger::writeToLog ("=== Getting Video Duration ===");
+    juce::Logger::writeToLog ("Video: " + videoPath);
+    
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::String errorMsg = "API client script not found";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return -1.0f;
+    }
+    
+    // Build command: python standalone_api_client.py --action get_duration --video "path"
+    juce::String command = "\"" + pythonExe + "\" ";
+    command += "\"" + scriptFile.getFullPathName() + "\" ";
+    command += "--action get_duration ";
+    command += "--video \"" + videoPath + "\"";
+    
+    juce::Logger::writeToLog ("Executing duration check command...");
+    juce::Logger::writeToLog ("Command: " + command);
+    
+    // Create child process
+    juce::ChildProcess process;
+    
+    if (!process.start (command))
+    {
+        juce::String errorMsg = "Failed to start Python process";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return -1.0f;
+    }
+    
+    // Wait for completion (should be fast, <2 seconds)
+    if (!process.waitForProcessToFinish (10000))  // 10 second timeout
+    {
+        juce::String errorMsg = "Duration check timed out";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        process.kill();
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return -1.0f;
+    }
+    
+    // Read output
+    auto output = process.readAllProcessOutput().trim();
+    juce::Logger::writeToLog ("Python output: " + output);
+    
+    // Parse JSON response
+    auto json = juce::JSON::parse (output);
+    if (auto* obj = json.getDynamicObject())
+    {
+        bool success = obj->getProperty ("success");
+        double duration = (double) obj->getProperty ("duration");
+        auto errorFromJson = obj->getProperty ("error").toString();
+        
+        if (success && duration > 0.0)
+        {
+            juce::Logger::writeToLog ("=== Duration Check SUCCESS ===");
+            juce::Logger::writeToLog ("Duration: " + juce::String (duration, 2) + "s");
+            if (errorMessage != nullptr)
+                *errorMessage = "";
+            return (float) duration;
+        }
+        else
+        {
+            juce::Logger::writeToLog ("=== Duration Check FAILED ===");
+            juce::Logger::writeToLog ("ERROR: " + errorFromJson);
+            if (errorMessage != nullptr)
+                *errorMessage = errorFromJson;
+            return -1.0f;
+        }
+    }
+    
+    juce::String errorMsg = "Failed to parse duration check response";
+    juce::Logger::writeToLog ("ERROR: " + errorMsg);
+    juce::Logger::writeToLog ("Raw output was: " + output);
+    if (errorMessage != nullptr)
+        *errorMessage = errorMsg;
+    return -1.0f;
 }
 
 bool PtV2AProcessor::validateVideoDuration(

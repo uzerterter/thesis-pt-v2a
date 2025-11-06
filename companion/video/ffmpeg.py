@@ -4,11 +4,13 @@ FFmpeg operations for video processing
 Provides:
 - FFmpeg availability detection (imageio-ffmpeg or system)
 - Video segment trimming with fast copy codec
+- Video duration detection using FFprobe
 """
 
 import subprocess
 import shutil
 import tempfile
+import json
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -238,3 +240,132 @@ def trim_video_segment(
             'duration': None,
             'error': f'Trimming error: {str(e)}'
         }
+
+
+def get_video_duration(video_path: str) -> Dict[str, any]:
+    """
+    Get video file duration using FFprobe.
+    
+    Uses FFprobe (part of FFmpeg) to read video metadata.
+    
+    Args:
+        video_path (str): Path to video file
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'duration': float or None (duration in seconds),
+            'error': str or None
+        }
+    
+    Example:
+        >>> result = get_video_duration("video.mp4")
+        >>> if result['success']:
+        >>>     print(f"Video duration: {result['duration']}s")
+        >>> else:
+        >>>     print(f"Error: {result['error']}")
+    
+    Note:
+        Uses FFprobe's JSON output format for reliable parsing
+    """
+    try:
+        # Validate input file
+        video_path_obj = Path(video_path)
+        if not video_path_obj.exists():
+            return {
+                'success': False,
+                'duration': None,
+                'error': f'Video file not found: {video_path}'
+            }
+        
+        # Check FFmpeg availability (FFprobe is part of FFmpeg)
+        ffmpeg_check = check_ffmpeg_available()
+        if not ffmpeg_check['available']:
+            return {
+                'success': False,
+                'duration': None,
+                'error': f'FFmpeg/FFprobe not available: {ffmpeg_check["error"]}'
+            }
+        
+        # Get FFprobe path (usually in same directory as FFmpeg)
+        ffmpeg_path = Path(ffmpeg_check['path'])
+        ffprobe_path = ffmpeg_path.parent / ('ffprobe.exe' if ffmpeg_path.suffix == '.exe' else 'ffprobe')
+        
+        # If ffprobe not found next to ffmpeg, try system PATH
+        if not ffprobe_path.exists():
+            ffprobe_exe = shutil.which('ffprobe')
+            if not ffprobe_exe:
+                return {
+                    'success': False,
+                    'duration': None,
+                    'error': 'FFprobe not found (should be installed with FFmpeg)'
+                }
+            ffprobe_path = Path(ffprobe_exe)
+        
+        # Build FFprobe command to get duration
+        # -v quiet: suppress warnings
+        # -print_format json: output as JSON
+        # -show_format: show container/format info (includes duration)
+        cmd = [
+            str(ffprobe_path),
+            '-v', 'quiet',
+            '-print_format', 'json',
+            '-show_format',
+            str(video_path)
+        ]
+        
+        # Execute FFprobe
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10  # 10 second timeout
+        )
+        
+        if result.returncode != 0:
+            return {
+                'success': False,
+                'duration': None,
+                'error': f'FFprobe failed: {result.stderr}'
+            }
+        
+        # Parse JSON output
+        try:
+            data = json.loads(result.stdout)
+            duration_str = data.get('format', {}).get('duration')
+            
+            if duration_str is None:
+                return {
+                    'success': False,
+                    'duration': None,
+                    'error': 'Duration not found in FFprobe output'
+                }
+            
+            duration = float(duration_str)
+            
+            return {
+                'success': True,
+                'duration': duration,
+                'error': None
+            }
+            
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            return {
+                'success': False,
+                'duration': None,
+                'error': f'Failed to parse FFprobe output: {str(e)}'
+            }
+        
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'duration': None,
+            'error': 'FFprobe timed out (10s limit)'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'duration': None,
+            'error': f'Duration check error: {str(e)}'
+        }
+

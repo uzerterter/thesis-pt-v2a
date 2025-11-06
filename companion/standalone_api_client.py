@@ -222,9 +222,16 @@ Examples:
     parser.add_argument(
         '--action',
         type=str,
-        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'trim_video', 'validate_duration'],
+        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'trim_video', 'validate_duration', 'get_duration', 'import_audio'],
         default='generate',
         help='Action to perform (default: generate)'
+    )
+    
+    # Audio import parameter
+    parser.add_argument(
+        '--audio-path',
+        type=str,
+        help='Path to audio file (for import_audio action)'
     )
     
     # Trimming parameters
@@ -324,9 +331,71 @@ def main():
     
     elif args.action == 'get_video_selection':
         """Get timeline selection from Pro Tools"""
+        print(f"=== DEBUG: get_video_selection action START ===", file=sys.stderr)
+        sys.stderr.flush()
+        
         result = get_video_timeline_selection()
+        
+        print(f"=== DEBUG: PTSL call completed, result={result['success']} ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Print JSON to stdout (will be in log file)
         print(json.dumps(result))
-        return 0 if result['success'] else 1
+        sys.stdout.flush()  # Force flush to ensure JSON is written
+        
+        print(f"=== DEBUG: JSON output sent, exiting... ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Force immediate exit to avoid hanging
+        sys.exit(0 if result['success'] else 1)
+    
+    elif args.action == 'get_video_info':
+        """Get timeline selection AND video file in one PTSL call (faster!)"""
+        print(f"=== DEBUG: get_video_info action START ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Get timeline selection
+        selection = get_video_timeline_selection()
+        
+        print(f"=== DEBUG: Timeline selection: {selection['success']} ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        if not selection['success']:
+            # Return error from timeline selection
+            print(json.dumps(selection))
+            sys.stdout.flush()
+            sys.exit(1)
+        
+        # Get video file path
+        video_file = get_video_file_from_protools()
+        
+        print(f"=== DEBUG: Video file lookup: {video_file['success']} ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Combine results into single response
+        combined_result = {
+            'success': selection['success'] and video_file['success'],
+            # Timeline selection fields
+            'in_time': selection.get('in_time'),
+            'out_time': selection.get('out_time'),
+            'in_seconds': selection.get('in_seconds'),
+            'out_seconds': selection.get('out_seconds'),
+            'duration_seconds': selection.get('duration_seconds'),
+            'fps': selection.get('fps'),
+            # Video file field
+            'video_path': video_file.get('video_path'),
+            # Error from whichever failed (if any)
+            'error': video_file.get('error') if not video_file['success'] else selection.get('error')
+        }
+        
+        print(json.dumps(combined_result))
+        sys.stdout.flush()
+        
+        print(f"=== DEBUG: Combined result sent, exiting... ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Force immediate exit
+        sys.exit(0 if combined_result['success'] else 1)
     
     elif args.action == 'get_video_file':
         """Get video file path from Pro Tools"""
@@ -375,6 +444,84 @@ def main():
         print(json.dumps(result))
         return 0 if result['valid'] else 1
     
+    elif args.action == 'get_duration':
+        """Get video file duration using FFprobe"""
+        print(f"=== DEBUG: get_duration action ===", file=sys.stderr)
+        print(f"Video path: {args.video}", file=sys.stderr)
+        
+        if not args.video:
+            error_response = {
+                'success': False,
+                'error': '--video argument required for get_duration action'
+            }
+            print(f"ERROR: {error_response['error']}", file=sys.stderr)
+            print(json.dumps(error_response))
+            return 1
+        
+        from video import get_video_duration
+        print(f"Calling get_video_duration()...", file=sys.stderr)
+        result = get_video_duration(args.video)
+        print(f"Result: {result}", file=sys.stderr)
+        print(json.dumps(result))
+        return 0 if result['success'] else 1
+    
+    elif args.action == 'import_audio':
+        """Import audio file to Pro Tools timeline"""
+        print(f"=== DEBUG: import_audio action START ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        if not args.audio_path:
+            error_result = {
+                'success': False,
+                'error': '--audio-path argument required for import_audio action'
+            }
+            print(f"ERROR: {error_result['error']}", file=sys.stderr)
+            print(json.dumps(error_result))
+            sys.exit(1)
+        
+        print(f"Audio path: {args.audio_path}", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Import to Pro Tools timeline
+        try:
+            success = import_audio_to_pro_tools(
+                audio_path=args.audio_path,
+                location="SessionStart"  # Import at session start
+            )
+            
+            result = {
+                'success': success,
+                'audio_path': args.audio_path
+            }
+            
+            if not success:
+                result['error'] = 'PTSL import returned False'
+            
+            print(f"=== DEBUG: Import result: {success} ===", file=sys.stderr)
+            sys.stderr.flush()
+            
+            print(json.dumps(result))
+            sys.stdout.flush()
+            sys.exit(0 if success else 1)
+            
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            traceback_str = traceback.format_exc()
+            
+            print(f"ERROR: Import exception: {error_msg}", file=sys.stderr)
+            print(traceback_str, file=sys.stderr)
+            sys.stderr.flush()
+            
+            error_result = {
+                'success': False,
+                'error': error_msg,
+                'traceback': traceback_str
+            }
+            print(json.dumps(error_result))
+            sys.stdout.flush()
+            sys.exit(1)
+    
     # =============================================================================
     # Standard Generation Mode (action == 'generate')
     # =============================================================================
@@ -398,8 +545,10 @@ def main():
                 video_path_obj = validate_video_file(args.video)
                 video_path = str(video_path_obj)
             except (FileNotFoundError, ValueError) as e:
+                error_msg = f"Video validation failed: {e}"
                 if not quiet:
-                    print(f"❌ Video validation failed: {e}")
+                    print(f"❌ {error_msg}")
+                print(f"ERROR: {error_msg}", file=sys.stderr)
                 return 1
             
             # Use CLI parameters
@@ -425,12 +574,18 @@ def main():
         if not quiet:
             print(f"\n🔗 Checking API connection to {args.api_url}...")
         
+        print(f"=== DEBUG: Checking API health at {args.api_url} ===", file=sys.stderr)
+        
         if not check_api_health(args.api_url, quiet=quiet):
+            error_msg = f"API not available at {args.api_url}"
+            print(f"ERROR: {error_msg}", file=sys.stderr)
             if not quiet:
                 print("\n💡 Make sure the API server is running on server:")
                 print("   docker restart mmaudio-api")
                 print("   # or: python main.py")
             return 1
+        
+        print(f"=== DEBUG: API health check passed ===", file=sys.stderr)
         
         if not quiet:
             print("✅ API is online!")
@@ -470,6 +625,9 @@ def main():
                 if not quiet:
                     print(f"\n📥 Importing to Pro Tools timeline...")
                 
+                print(f"=== DEBUG: Starting PTSL import ===", file=sys.stderr)
+                print(f"Audio file: {output_file}", file=sys.stderr)
+                
                 try:
                     success = import_audio_to_pro_tools(
                         audio_path=output_file,
@@ -477,12 +635,17 @@ def main():
                     )
                     
                     if success:
+                        print(f"=== DEBUG: PTSL import SUCCESS ===", file=sys.stderr)
                         if not quiet:
                             print(f"✅ Audio imported to Pro Tools timeline!")
                     else:
+                        print(f"WARNING: PTSL import returned False", file=sys.stderr)
                         if not quiet:
                             print(f"⚠️  PTSL import failed - audio file saved but not imported")
                 except Exception as e:
+                    print(f"ERROR: PTSL import exception: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
                     if not quiet:
                         print(f"⚠️  PTSL import failed: {e}")
                         print(f"   Audio file saved at: {output_file}")
@@ -493,20 +656,31 @@ def main():
             else:
                 print(f"\n🎉 Success! Audio generated and saved.")
                 print(f"   Output: {output_file}")
+            
+            print(f"=== DEBUG: Generation completed successfully ===", file=sys.stderr)
+            print(f"Output file: {output_file}", file=sys.stderr)
             return 0
         else:
+            error_msg = "Audio generation failed - no output file returned"
+            print(f"ERROR: {error_msg}", file=sys.stderr)
             if not quiet:
                 print(f"\n❌ Audio generation failed.")
             return 1
             
     except KeyboardInterrupt:
         if not quiet:
-            print(f"\n\n⚠️  Operation cancelled by user.")
+            print(f"\n\n⚠️  Operation cancelled by user.", file=sys.stderr)
         return 1
     except Exception as e:
-        # Print errors to STDOUT (not stderr) so Pro Tools plugin can see them
+        # Print errors to BOTH stdout and stderr for maximum visibility
+        # stdout: For C++ plugin to parse
+        # stderr: For python_stderr.log debugging
+        import traceback
         error_msg = f"ERROR: {e}"
-        print(error_msg)
+        print(error_msg)  # stdout for C++ parsing
+        print(error_msg, file=sys.stderr)  # stderr for logging
+        print("\nFull traceback:", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return 1
 
 
