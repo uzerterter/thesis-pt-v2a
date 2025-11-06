@@ -115,6 +115,26 @@ private:
      */
     juce::TextButton openLogButton { "Open Log" };
     
+    /**
+     * Label for video selection dropdown
+     */
+    juce::Label videoLabel { {}, "Select Video:" };
+    
+    /**
+     * Dropdown to select which video to use for generation
+     * Populated dynamically when videos are found in Pro Tools session
+     * 
+     * Usage:
+     *   - Automatically populated when timeline selection is read
+     *   - Shows filename of each video
+     *   - User selects which video to generate audio for
+     *   - First video selected by default
+     */
+    juce::ComboBox videoComboBox;
+    
+    /** Storage for available video file paths */
+    juce::StringArray availableVideoPaths;
+    
     //==============================================================================
     // Event Handlers
     //==============================================================================

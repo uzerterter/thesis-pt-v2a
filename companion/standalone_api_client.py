@@ -366,8 +366,11 @@ def main():
             sys.stdout.flush()
             sys.exit(1)
         
-        # Get video file path
-        video_file = get_video_file_from_protools()
+        # Get video file path, passing timeline selection for validation
+        video_file = get_video_file_from_protools(
+            timeline_in_seconds=selection.get('in_seconds'),
+            timeline_out_seconds=selection.get('out_seconds')
+        )
         
         print(f"=== DEBUG: Video file lookup: {video_file['success']} ===", file=sys.stderr)
         sys.stderr.flush()
@@ -382,8 +385,10 @@ def main():
             'out_seconds': selection.get('out_seconds'),
             'duration_seconds': selection.get('duration_seconds'),
             'fps': selection.get('fps'),
-            # Video file field
+            # Video file fields
             'video_path': video_file.get('video_path'),
+            'video_files': video_file.get('video_files', []),
+            'video_count': video_file.get('video_count', 0),
             # Error from whichever failed (if any)
             'error': video_file.get('error') if not video_file['success'] else selection.get('error')
         }
