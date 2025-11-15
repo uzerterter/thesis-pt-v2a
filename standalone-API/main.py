@@ -501,7 +501,21 @@ def load_video_optimized(video_path: Path, duration_sec: float):
     start_time = time.time()
     
     # Process video using MMAudio's native function
-    video_info = load_video(video_path, duration_sec)
+    try:
+        video_info = load_video(video_path, duration_sec)
+        
+        # Validate video_info
+        if video_info is None:
+            raise ValueError(f"Video loading returned None for '{video_path.name}'")
+        
+        # Check if video has frames
+        if hasattr(video_info, 'frames') and len(video_info.frames) == 0:
+            raise ValueError(f"Video '{video_path.name}' has no frames (duration: {duration_sec}s)")
+            
+    except Exception as e:
+        logger.error(f"❌ Video loading failed for '{video_path.name}': {e}")
+        logger.error(f"Video details - Duration: {duration_sec}s, Size: {video_path.stat().st_size} bytes")
+        raise ValueError(f"Failed to load video '{video_path.name}': {str(e)}") from e
     
     load_time = time.time() - start_time
     logger.info(f"✅ Video '{video_path.name}' processed in {load_time:.2f}s")
@@ -711,13 +725,66 @@ async def generate_audio(
             tmp_file.write(content)
             tmp_video_path = Path(tmp_file.name)
         
-        # Auto-detect duration if not provided
-        if duration is None:
-            with av.open(tmp_video_path) as container:
-                stream = container.streams.video[0]
-                duration = float(stream.duration * stream.time_base)
-            logger.info(f"Auto-detected duration: {duration:.2f}s")
+        # Frame check: disabled by default. Set VIDEO_FRAME_CHECK=1/true/yes/on to enable quick first-frame decode.
+        FRAME_CHECK_ENABLED = os.getenv("VIDEO_FRAME_CHECK", "false").strip().lower() in ("1", "true", "yes", "on")
         
+        validation_start = time.time()
+        try:
+            metadata_start = time.time()
+            with av.open(tmp_video_path) as container:
+                if not container.streams.video:
+                    raise HTTPException(status_code=400, detail="Video file has no video stream")
+                stream = container.streams.video[0]
+                # Prefer stream.duration if available
+                try:
+                    duration_actual = float(stream.duration * stream.time_base)
+                except Exception:
+                    # Fallback to container duration in seconds
+                    duration_actual = float(container.duration / av.time_base) if getattr(container, 'duration', None) else 0.0
+
+                metadata_time = time.time() - metadata_start
+                logger.info(f"📊 Metadata check: {metadata_time*1000:.1f}ms | Duration: {duration_actual:.2f}s")
+
+                # Quick decode check (first frame) if enabled
+                if FRAME_CHECK_ENABLED:
+                    frame_check_start = time.time()
+                    frame_found = False
+                    # Demux + decode until first frame or until a small number of packets checked
+                    for packet in container.demux(stream):
+                        for frame in packet.decode():
+                            frame_found = True
+                            break
+                        if frame_found:
+                            break
+                    frame_check_time = time.time() - frame_check_start
+                    
+                    if not frame_found:
+                        raise HTTPException(status_code=400, detail=f"Video appears to have no decodable frames (duration: {duration_actual:.2f}s)")
+                    
+                    logger.info(f"✅ Frame decode check: {frame_check_time*1000:.1f}ms | First frame decoded successfully")
+
+        except HTTPException:
+            # Re-raise FastAPI HTTPExceptions
+            raise
+        except Exception as e:
+            logger.error(f"Error while inspecting uploaded video: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to read video metadata: {e}")
+        
+        validation_total_time = time.time() - validation_start
+        logger.info(f"⏱️  Total validation time: {validation_total_time*1000:.1f}ms")
+
+        # If client provided a duration, warn if it differs significantly and prefer the actual
+        if duration is not None:
+            if abs(duration - duration_actual) > 0.5:
+                logger.warning(f"Client-supplied duration ({duration:.2f}s) differs from file ({duration_actual:.2f}s); using file value")
+        duration = duration_actual
+
+        # Validate duration limits (use file-derived duration)
+        if duration < 3:
+            raise HTTPException(status_code=400, detail=f"Video too short: {duration:.2f}s (minimum 3s)")
+        if duration > 14:
+            raise HTTPException(status_code=400, detail=f"Video too long: {duration:.2f}s (maximum 14s)")
+
         # Load model (cached)
         net, feature_utils, seq_cfg = get_cached_model(model_name)
         
