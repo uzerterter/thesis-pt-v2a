@@ -6,6 +6,7 @@ MMAudio Standalone API
 import os
 import sys
 import logging
+import tracemalloc
 from pathlib import Path
 from typing import Optional
 import hashlib
@@ -824,7 +825,84 @@ async def generate_audio(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ========== MEMORY PROFILING ENDPOINT ==========
+@app.get("/memory/profile")
+async def get_memory_profile():
+    """Get detailed memory profiling information"""
+    import gc
+    from collections import Counter
+    
+    try:
+        # Collect garbage first
+        gc.collect()
+        
+        # Process memory
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        
+        # Count objects by type
+        obj_counts = Counter()
+        obj_sizes = {}
+        
+        for obj in gc.get_objects():
+            obj_type = type(obj).__name__
+            obj_counts[obj_type] += 1
+            
+            try:
+                size = sys.getsizeof(obj)
+                if obj_type not in obj_sizes:
+                    obj_sizes[obj_type] = 0
+                obj_sizes[obj_type] += size
+            except:
+                pass
+        
+        # Sort by size
+        top_objects = sorted(obj_sizes.items(), key=lambda x: x[1], reverse=True)[:30]
+        
+        result = {
+            "process_memory": {
+                "rss_mb": mem_info.rss / 1024 / 1024,
+                "vms_mb": mem_info.vms / 1024 / 1024,
+                "rss_gb": mem_info.rss / 1024 / 1024 / 1024,
+            },
+            "top_objects": [
+                {
+                    "type": obj_type,
+                    "total_size_mb": size / 1024 / 1024,
+                    "count": obj_counts[obj_type],
+                    "avg_size_bytes": size / obj_counts[obj_type] if obj_counts[obj_type] > 0 else 0
+                }
+                for obj_type, size in top_objects
+            ],
+            "tracemalloc": None
+        }
+        
+        # Tracemalloc info
+        if tracemalloc.is_tracing():
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = snapshot.statistics('lineno')[:20]
+            
+            result["tracemalloc"] = [
+                {
+                    "file": str(stat.traceback[0].filename),
+                    "line": stat.traceback[0].lineno,
+                    "size_mb": stat.size / 1024 / 1024,
+                    "count": stat.count
+                }
+                for stat in top_stats
+            ]
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Memory profiling failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ========== RUN APPLICATION ==========
 if __name__ == "__main__":
+    # Enable memory tracking for debugging
+    tracemalloc.start()
     logger.info("Starting MMAudio Standalone API...")
+    logger.info("tracemalloc enabled for memory profiling")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
