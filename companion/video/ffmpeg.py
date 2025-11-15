@@ -287,74 +287,120 @@ def get_video_duration(video_path: str) -> Dict[str, any]:
                 'error': f'FFmpeg/FFprobe not available: {ffmpeg_check["error"]}'
             }
         
-        # Get FFprobe path (usually in same directory as FFmpeg)
+        # Try to find FFprobe (usually in same directory as FFmpeg)
         ffmpeg_path = Path(ffmpeg_check['path'])
         ffprobe_path = ffmpeg_path.parent / ('ffprobe.exe' if ffmpeg_path.suffix == '.exe' else 'ffprobe')
         
         # If ffprobe not found next to ffmpeg, try system PATH
         if not ffprobe_path.exists():
             ffprobe_exe = shutil.which('ffprobe')
-            if not ffprobe_exe:
+            if ffprobe_exe:
+                ffprobe_path = Path(ffprobe_exe)
+        
+        # If FFprobe is available, use it (preferred method)
+        if ffprobe_path.exists():
+            # Build FFprobe command to get duration
+            # -v quiet: suppress warnings
+            # -print_format json: output as JSON
+            # -show_format: show container/format info (includes duration)
+            cmd = [
+                str(ffprobe_path),
+                '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_format',
+                str(video_path)
+            ]
+            
+            # Execute FFprobe
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10  # 10 second timeout
+            )
+            
+            if result.returncode != 0:
                 return {
                     'success': False,
                     'duration': None,
-                    'error': 'FFprobe not found (should be installed with FFmpeg)'
+                    'error': f'FFprobe failed: {result.stderr}'
                 }
-            ffprobe_path = Path(ffprobe_exe)
-        
-        # Build FFprobe command to get duration
-        # -v quiet: suppress warnings
-        # -print_format json: output as JSON
-        # -show_format: show container/format info (includes duration)
-        cmd = [
-            str(ffprobe_path),
-            '-v', 'quiet',
-            '-print_format', 'json',
-            '-show_format',
-            str(video_path)
-        ]
-        
-        # Execute FFprobe
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10  # 10 second timeout
-        )
-        
-        if result.returncode != 0:
-            return {
-                'success': False,
-                'duration': None,
-                'error': f'FFprobe failed: {result.stderr}'
-            }
-        
-        # Parse JSON output
-        try:
-            data = json.loads(result.stdout)
-            duration_str = data.get('format', {}).get('duration')
             
-            if duration_str is None:
+            # Parse JSON output
+            try:
+                data = json.loads(result.stdout)
+                duration_str = data.get('format', {}).get('duration')
+                
+                if duration_str is None:
+                    return {
+                        'success': False,
+                        'duration': None,
+                        'error': 'Duration not found in FFprobe output'
+                    }
+                
+                duration = float(duration_str)
+                
+                return {
+                    'success': True,
+                    'duration': duration,
+                    'error': None
+                }
+                
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
                 return {
                     'success': False,
                     'duration': None,
-                    'error': 'Duration not found in FFprobe output'
+                    'error': f'Failed to parse FFprobe output: {e}'
                 }
+        
+        # Fallback: Use FFmpeg to get duration (works when FFprobe is not available)
+        # FFmpeg prints duration in stderr when analyzing input file
+        else:
+            cmd = [
+                str(ffmpeg_path),
+                '-i', str(video_path),
+                '-f', 'null',
+                '-'
+            ]
             
-            duration = float(duration_str)
+            # Execute FFmpeg
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
             
-            return {
-                'success': True,
-                'duration': duration,
-                'error': None
-            }
-            
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            return {
-                'success': False,
-                'duration': None,
-                'error': f'Failed to parse FFprobe output: {str(e)}'
-            }
+            # Parse duration from stderr (FFmpeg prints: "Duration: HH:MM:SS.ms")
+            try:
+                stderr = result.stderr
+                duration_match = None
+                for line in stderr.split('\n'):
+                    if 'Duration:' in line:
+                        # Extract duration string like "00:01:23.45"
+                        import re
+                        match = re.search(r'Duration:\s*(\d+):(\d+):(\d+)\.(\d+)', line)
+                        if match:
+                            hours, minutes, seconds, centiseconds = match.groups()
+                            duration = int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(centiseconds) / 100
+                            return {
+                                'success': True,
+                                'duration': duration,
+                                'error': None
+                            }
+                
+                return {
+                    'success': False,
+                    'duration': None,
+                    'error': 'Could not extract duration from FFmpeg output'
+                }
+                
+            except (ValueError, AttributeError) as e:
+                return {
+                    'success': False,
+                    'duration': None,
+                    'error': f'Failed to parse FFmpeg output: {str(e)}'
+                }
         
     except subprocess.TimeoutExpired:
         return {

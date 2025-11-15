@@ -33,11 +33,39 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
         handleOpenLogButtonClicked();
     };
     addAndMakeVisible (openLogButton);
+    
+    // Configure video offset label
+    videoOffsetLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (videoOffsetLabel);
+    
+    // Configure video offset input
+    videoOffsetInput.setMultiLine (false);
+    videoOffsetInput.setReturnKeyStartsNewLine (false);
+    videoOffsetInput.setTextToShowWhenEmpty ("e.g., 00:02 (leave empty if video starts at timeline beginning)", juce::Colours::grey);
+    addAndMakeVisible (videoOffsetInput);
+    
+    // Configure auto-detect toggle with change handler
+    autoDetectClipBoundsToggle.onClick = [this]
+    {
+        // Disable manual offset input when auto-detect is enabled
+        bool autoDetectEnabled = autoDetectClipBoundsToggle.getToggleState();
+        videoOffsetInput.setEnabled (!autoDetectEnabled);
+        
+        if (autoDetectEnabled)
+        {
+            videoOffsetInput.setAlpha (0.5f);  // Visual feedback: greyed out
+        }
+        else
+        {
+            videoOffsetInput.setAlpha (1.0f);  // Visual feedback: normal
+        }
+    };
+    addAndMakeVisible (autoDetectClipBoundsToggle);
 
     // Set fixed window size (not resizable in Pro Tools)
     // Pro Tools plugins typically have fixed UI layouts
     setResizable (false, false);
-    setSize (900, 300);  // Width x Height in pixels
+    setSize (900, 380);  // Width x Height in pixels (increased from 350 to 380 for auto-detect toggle)
 }
 
 //==============================================================================
@@ -154,6 +182,12 @@ void PtV2AEditor::handleRenderDummyButtonClicked()
         prompt.getText(),
         PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT,
         PtV2AProcessor::DEFAULT_SEED,
+        "",  // No video offset for dummy video
+        0.0f,  // No timeline selection for dummy video
+        0.0f,  // No timeline selection for dummy video
+        false,  // No auto-detect for dummy video
+        -1.0f,  // No clip start
+        -1.0f,  // No clip end
         &generationError
     );
     
@@ -286,11 +320,29 @@ void PtV2AEditor::resized()
     // Open Log button: 120px wide, at the end
     openLogButton.setBounds (buttonRow.removeFromLeft (120));
     
-    // Future components can be added below by continuing to use r.removeFromTop()
-    // Example for Phase 2:
-    //   r.removeFromTop (10);  // spacing
-    //   negativePromptLabel.setBounds (r.removeFromTop (20));
-    //   negativePrompt.setBounds (r.removeFromTop (28));
+    // 10px spacing before next row
+    r.removeFromTop (10);
+    
+    // Video offset row: Label + Input field
+    auto offsetRow = r.removeFromTop (28);
+    
+    // Label: 220px wide
+    videoOffsetLabel.setBounds (offsetRow.removeFromLeft (220));
+    
+    // 10px spacing between label and input
+    offsetRow.removeFromLeft (10);
+    
+    // Input field: remaining width
+    videoOffsetInput.setBounds (offsetRow);
+    
+    // 10px spacing before next row
+    r.removeFromTop (10);
+    
+    // Auto-detect toggle row
+    auto autoDetectRow = r.removeFromTop (28);
+    
+    // Toggle button: full width
+    autoDetectClipBoundsToggle.setBounds (autoDetectRow);
 }
 
 //==============================================================================
@@ -432,6 +484,53 @@ void PtV2AEditor::timerCallback()
             break;
         }
         
+        case AsyncState::ReadingClipBounds:
+        {
+            // Safety check
+            if (!ptslProcess)
+            {
+                stopTimer();
+                currentAsyncState = AsyncState::Idle;
+                return;
+            }
+            
+            // Check for timeout
+            if (elapsed.inMilliseconds() > PTSL_TIMEOUT_MS)
+            {
+                juce::Logger::writeToLog ("ERROR: Clip bounds read timed out after " + 
+                                          juce::String (PTSL_TIMEOUT_MS) + "ms");
+                
+                stopTimer();
+                ptslProcess->kill();
+                ptslProcess.reset();
+                currentAsyncState = AsyncState::Idle;
+                
+                juce::Logger::writeToLog ("Clip bounds read timed out - aborting");
+                
+                renderButton.setEnabled (true);
+                renderButton.setButtonText ("Render Audio");
+                return;
+            }
+            
+            // Check if process is still running
+            if (ptslProcess->isRunning())
+            {
+                // Still running - keep waiting (non-blocking)
+                return;
+            }
+            
+            // Process finished! Read output
+            juce::Logger::writeToLog ("Clip bounds read finished after " + 
+                                      juce::String (elapsed.inMilliseconds()) + "ms");
+            
+            auto output = ptslProcess->readAllProcessOutput();
+            ptslProcess.reset();
+            
+            // Pass output to handler for parsing
+            handleClipBoundsResult (output);
+            break;
+        }
+        
         case AsyncState::GeneratingAudio:
         {
             // Poll for output file existence
@@ -561,6 +660,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         juce::String inTime = obj->getProperty ("in_time").toString();
         juce::String outTime = obj->getProperty ("out_time").toString();
         float durationSeconds = (float) (double) obj->getProperty ("duration_seconds");
+        float inSeconds = (float) (double) obj->getProperty ("in_seconds");
+        float outSeconds = (float) (double) obj->getProperty ("out_seconds");
         juce::String videoPath = obj->getProperty ("video_path").toString();
         juce::String errorMessage = obj->getProperty ("error").toString();
         
@@ -588,9 +689,12 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         juce::Logger::writeToLog ("Timeline selection SUCCESS: " + inTime + " - " + outTime);
         juce::Logger::writeToLog ("Duration: " + juce::String (durationSeconds, 2) + "s");
         
-        // Store timeline in-time for audio import positioning
+        // Store timeline selection for audio import and video trimming
         timelineInTime = inTime;
+        timelineInSeconds = inSeconds;
+        timelineOutSeconds = outSeconds;
         juce::Logger::writeToLog ("Stored timeline in-time: " + timelineInTime);
+        juce::Logger::writeToLog ("Stored timeline in/out seconds: " + juce::String (inSeconds) + "s - " + juce::String (outSeconds) + "s");
         
         // Validate duration: 5-12 seconds
         if (durationSeconds < 5.0f)
@@ -669,7 +773,108 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         juce::Logger::writeToLog ("Video file: " + videoPath);
         
         //======================================================================
-        // Step 4: Start async audio generation (NO PTSL import yet!)
+        // Step 3.5: Check if clip is trimmed (compare clip duration vs source duration)
+        //======================================================================
+        // Get source video duration via FFprobe
+        float sourceVideoDuration = getSourceVideoDuration (videoPath);
+        
+        if (sourceVideoDuration > 0.0f)
+        {
+            juce::Logger::writeToLog ("Source video duration: " + juce::String (sourceVideoDuration, 2) + "s");
+            juce::Logger::writeToLog ("Clip duration: " + juce::String (durationSeconds, 2) + "s");
+            
+            // Check if clip is trimmed (with 0.5s tolerance for rounding)
+            if (durationSeconds < (sourceVideoDuration - 0.5f))
+            {
+                juce::Logger::writeToLog ("→ Clip is TRIMMED (shorter than source)");
+                clipIsTrimmed = true;
+            }
+            else
+            {
+                juce::Logger::writeToLog ("→ Clip uses FULL source video");
+                clipIsTrimmed = false;
+            }
+        }
+        else
+        {
+            juce::Logger::writeToLog ("WARNING: Could not determine source video duration, assuming not trimmed");
+            clipIsTrimmed = false;
+        }
+        
+        //======================================================================
+        // Step 4: Determine trimming workflow
+        //======================================================================
+        // Check user preferences
+        juce::String manualOffset = videoOffsetInput.getText().trim();
+        bool hasManualOffset = manualOffset.isNotEmpty();
+        bool autoDetectEnabled = autoDetectClipBoundsToggle.getToggleState();
+        
+        // Decision logic (priority order):
+        // 1. Manual offset + trimmed clip → Read clip bounds FIRST (needed for calculation), then use manual offset
+        // 2. Manual offset + untrimmed clip → Use manual offset directly (no clip bounds needed)
+        // 3. Auto-detect (trimmed, no manual offset) → Read clip bounds
+        // 4. Full video (untrimmed, no manual offset) → Use entire source
+        
+        if (hasManualOffset && clipIsTrimmed)
+        {
+            // SPECIAL CASE: Manual offset on trimmed clip
+            // Need to read clip bounds first for correct calculation in Python
+            // Formula: source_start = clip_source_start + (timeline_pos - clip_timeline_start)
+            juce::Logger::writeToLog ("Manual offset on TRIMMED clip - reading clip bounds first...");
+            juce::Logger::writeToLog ("Manual offset value: " + manualOffset);
+            
+            renderButton.setButtonText ("Reading Clip Bounds...");
+            
+            // Store video and prompt for later use (after clip bounds are read)
+            currentVideoPath = videoPath;
+            currentPrompt = prompt.getText();
+            
+            // Start async clip bounds reading
+            // handleClipBoundsResult() will detect manual offset and proceed accordingly
+            startClipBoundsRead (videoPath);
+            return;  // Exit here, will continue in handleClipBoundsResult()
+        }
+        else if (hasManualOffset)
+        {
+            // Manual offset on UNTRIMMED clip - can proceed directly
+            juce::Logger::writeToLog ("Using manual offset workflow (untrimmed): " + manualOffset);
+            
+            // CRITICAL: Reset clip bounds from previous renders
+            // Otherwise old clip bounds will be passed to Python instead of manual offset
+            clipStartSeconds = -1.0f;
+            clipEndSeconds = -1.0f;
+        }
+        else if (clipIsTrimmed)
+        {
+            // Clip is trimmed and no manual offset → auto-detect clip bounds
+            if (autoDetectEnabled)
+            {
+                juce::Logger::writeToLog ("Auto-detect ENABLED - reading clip bounds from Pro Tools...");
+            }
+            else
+            {
+                juce::Logger::writeToLog ("Clip is trimmed - automatically reading clip bounds from Pro Tools...");
+            }
+            
+            renderButton.setButtonText ("Reading Clip Bounds...");
+            
+            // Store video and prompt for later use (after clip bounds are read)
+            currentVideoPath = videoPath;
+            currentPrompt = prompt.getText();
+            
+            // Start async clip bounds reading
+            // The timer will continue running, and handleClipBoundsResult() will proceed to generation
+            startClipBoundsRead (videoPath);
+            return;  // Exit here, will continue in handleClipBoundsResult()
+        }
+        else
+        {
+            // Clip not trimmed and no manual offset - use full video
+            juce::Logger::writeToLog ("Clip not trimmed - using full source video");
+        }
+        
+        //======================================================================
+        // Step 5: Start async audio generation (NO PTSL import yet!)
         //======================================================================
         renderButton.setButtonText ("Generating Audio...");
         juce::Logger::writeToLog ("Starting async audio generation...");
@@ -729,6 +934,23 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     currentVideoPath = videoPath;
     currentPrompt = promptText;
     
+    // Get video clip offset from UI (if specified)
+    juce::String videoOffset = videoOffsetInput.getText().trim();
+    
+    // Log clip bounds status
+    if (clipStartSeconds >= 0.0f && clipEndSeconds >= 0.0f)
+    {
+        juce::Logger::writeToLog ("Using clip bounds: " + juce::String (clipStartSeconds, 3) + "s - " + juce::String (clipEndSeconds, 3) + "s");
+    }
+    else if (videoOffset.isNotEmpty())
+    {
+        juce::Logger::writeToLog ("Using manual video offset: " + videoOffset);
+    }
+    else
+    {
+        juce::Logger::writeToLog ("No trimming - using full video");
+    }
+    
     // Call processor to start generation (returns immediately with expected output path)
     juce::String errorMessage;
     expectedAudioOutputPath = processor.generateAudioFromVideo (
@@ -736,6 +958,12 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
         promptText,
         PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT,
         PtV2AProcessor::DEFAULT_SEED,
+        videoOffset,
+        timelineInSeconds,
+        timelineOutSeconds,
+        false,  // autoDetectClipBounds = false (legacy workflow, causes deadlock)
+        clipStartSeconds,  // NEW: Pass clip bounds if available
+        clipEndSeconds,    // NEW: Pass clip bounds if available
         &errorMessage
     );
     
@@ -766,6 +994,235 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     // Timer is already running from previous state, just continue polling
     if (!isTimerRunning())
         startTimer (TIMER_INTERVAL_MS);
+}
+
+//==============================================================================
+// Clip Bounds Reading (Async Phase 1 of Auto-Trim Workflow)
+//==============================================================================
+
+void PtV2AEditor::startClipBoundsRead (const juce::String& videoPath)
+{
+    // Phase 1: Read clip boundaries asynchronously via PTSL
+    // This is SAFE because it doesn't block the main thread
+    // Once complete, handleClipBoundsResult() will store bounds and proceed to generation
+    
+    juce::Logger::writeToLog ("=== Starting Async Clip Bounds Read ===");
+    juce::Logger::writeToLog ("Video: " + videoPath);
+    
+    // Store video path for later use in Phase 2
+    currentVideoPath = videoPath;
+    
+    // Get Python executable and script
+    juce::String pythonExe = processor.getPythonExecutable();
+    juce::File scriptFile = processor.getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: API client script not found");
+        juce::Logger::writeToLog ("Clip bounds read aborted - script not found");
+        return;
+    }
+    
+    // Build command: python -X utf8 standalone_api_client.py --action get_clip_bounds
+    juce::StringArray commandArray;
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");
+    commandArray.add (scriptFile.getFullPathName());
+    commandArray.add ("--action");
+    commandArray.add ("get_clip_bounds");
+    
+    juce::String command = commandArray.joinIntoString (" ");
+    juce::Logger::writeToLog ("Command: " + command);
+    
+    // Start async process
+    ptslProcess = std::make_unique<juce::ChildProcess>();
+    if (!ptslProcess->start (commandArray))
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start clip bounds process");
+        juce::Logger::writeToLog ("Clip bounds read aborted");
+        ptslProcess.reset();
+        return;
+    }
+    
+    // Update state and reset timer
+    currentAsyncState = AsyncState::ReadingClipBounds;
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    juce::Logger::writeToLog ("Reading clip boundaries... (async)");
+    
+    // Timer should already be running from timeline selection
+    // If not (called standalone), start it
+    if (!isTimerRunning())
+        startTimer (TIMER_INTERVAL_MS);
+    
+    juce::Logger::writeToLog ("Clip bounds read started (async)");
+}
+
+void PtV2AEditor::handleClipBoundsResult (const juce::String& output)
+{
+    // Phase 1 complete: Parse JSON output with clip boundaries
+    juce::Logger::writeToLog ("=== Handling Clip Bounds Result ===");
+    juce::Logger::writeToLog ("Output: " + output);
+    
+    // Extract JSON from output (last JSON line)
+    auto lines = juce::StringArray::fromLines (output);
+    juce::String jsonOutput;
+    for (const auto& line : lines)
+    {
+        if (line.trimStart().startsWith ("{"))
+        {
+            jsonOutput = line.trim();
+        }
+    }
+    
+    if (jsonOutput.isEmpty())
+    {
+        juce::Logger::writeToLog ("ERROR: No JSON in clip bounds output");
+        juce::Logger::writeToLog ("Failed to parse clip bounds - aborting");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    // Parse JSON: {"success": true, "start_seconds": 5.005, "end_seconds": 10.844, ...}
+    auto jsonResult = juce::JSON::parse (jsonOutput);
+    if (jsonResult.isVoid())
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to parse clip bounds JSON");
+        juce::Logger::writeToLog ("Invalid clip bounds response - aborting");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    bool success = jsonResult.getProperty ("success", false);
+    if (!success)
+    {
+        juce::String error = jsonResult.getProperty ("error", "Unknown error");
+        juce::Logger::writeToLog ("ERROR: Clip bounds read failed: " + error);
+        juce::Logger::writeToLog ("Aborting clip bounds read");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    // Extract clip boundaries
+    clipStartSeconds = (float) jsonResult.getProperty ("start_seconds", -1.0);
+    clipEndSeconds = (float) jsonResult.getProperty ("end_seconds", -1.0);
+    
+    juce::Logger::writeToLog ("✅ Clip bounds read successfully");
+    juce::Logger::writeToLog ("  Start: " + juce::String (clipStartSeconds, 3) + "s");
+    juce::Logger::writeToLog ("  End: " + juce::String (clipEndSeconds, 3) + "s");
+    
+    if (clipStartSeconds < 0.0f || clipEndSeconds < 0.0f)
+    {
+        juce::Logger::writeToLog ("ERROR: Invalid clip bounds");
+        juce::Logger::writeToLog ("Clip boundaries are invalid - aborting");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    // Phase 1 complete! Now proceed to Phase 2: Background generation with clip bounds
+    currentAsyncState = AsyncState::Idle;  // Reset before starting generation
+    juce::Logger::writeToLog ("Proceeding to audio generation with clip bounds");
+    
+    // Start audio generation (will use clipStartSeconds and clipEndSeconds)
+    startAudioGeneration (currentVideoPath, currentPrompt);
+}
+
+//==============================================================================
+// Source Video Duration Check
+//==============================================================================
+
+float PtV2AEditor::getSourceVideoDuration (const juce::String& videoPath)
+{
+    // Use Python script to call FFprobe and get video duration
+    juce::Logger::writeToLog ("=== Checking Source Video Duration ===");
+    juce::Logger::writeToLog ("Video: " + videoPath);
+    
+    // Get Python executable path
+    juce::String pythonExe = processor.getPythonExecutable();
+    juce::Logger::writeToLog ("Python: " + pythonExe);
+    
+    // Get API client script
+    juce::File scriptFile = processor.getAPIClientScript();
+    if (!scriptFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: API client script not found at: " + scriptFile.getFullPathName());
+        return 0.0f;
+    }
+    
+    juce::Logger::writeToLog ("Script: " + scriptFile.getFullPathName());
+    
+    // Build command: python standalone_api_client.py --action get_duration --video "path"
+    juce::StringArray args;
+    args.add (pythonExe);
+    args.add ("-X");
+    args.add ("utf8");
+    args.add (scriptFile.getFullPathName());
+    args.add ("--action");
+    args.add ("get_duration");
+    args.add ("--video");
+    args.add (videoPath);
+    
+    juce::Logger::writeToLog ("Command: " + args.joinIntoString (" "));
+    
+    // Execute command (synchronous, should be fast)
+    juce::ChildProcess process;
+    if (!process.start (args))
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start Python process");
+        return 0.0f;
+    }
+    
+    // Wait for completion (max 5 seconds)
+    bool finished = process.waitForProcessToFinish (5000);
+    if (!finished)
+    {
+        juce::Logger::writeToLog ("ERROR: FFprobe check timed out");
+        process.kill();
+        return 0.0f;
+    }
+    
+    // Read output
+    juce::String output = process.readAllProcessOutput();
+    juce::Logger::writeToLog ("FFprobe output: " + output);
+    
+    // Extract JSON from output (might have debug lines)
+    auto lines = juce::StringArray::fromLines (output);
+    juce::String jsonOutput;
+    for (const auto& line : lines)
+    {
+        if (line.trimStart().startsWith ("{"))
+        {
+            jsonOutput = line.trim();
+            break;
+        }
+    }
+    
+    if (jsonOutput.isEmpty())
+    {
+        juce::Logger::writeToLog ("ERROR: No JSON found in output");
+        return 0.0f;
+    }
+    
+    // Parse JSON response: {"success": true, "duration": 60.0}
+    auto jsonResult = juce::JSON::parse (jsonOutput);
+    if (jsonResult.isVoid())
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to parse JSON response");
+        return 0.0f;
+    }
+    
+    bool success = jsonResult.getProperty ("success", false);
+    if (!success)
+    {
+        juce::String error = jsonResult.getProperty ("error", "Unknown error");
+        juce::Logger::writeToLog ("ERROR: FFprobe failed: " + error);
+        return 0.0f;
+    }
+    
+    float duration = (float) jsonResult.getProperty ("duration", 0.0);
+    juce::Logger::writeToLog ("Source video duration: " + juce::String (duration, 2) + "s");
+    
+    return duration;
 }
 
 void PtV2AEditor::checkAudioGenerationComplete()

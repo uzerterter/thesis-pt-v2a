@@ -8,16 +8,19 @@ Modules:
 - ptsl_client: Audio import to Pro Tools
 - timeline: Timeline selection and timecode operations
 - video: Video file detection from Pro Tools session
+- video_export: Video export from timeline selection
 """
 
 # Import from py-ptsl based implementation (now the main version)
 from .ptsl_client import import_audio_to_pro_tools
 from .timeline import get_video_timeline_selection, timecode_to_seconds
 from .video import get_video_file_from_protools
+from .video_export import export_timeline_selection_as_video
 
 __all__ = [
     'import_audio_to_pro_tools',
     'get_video_timeline_selection',
     'timecode_to_seconds',
     'get_video_file_from_protools',
+    'export_timeline_selection_as_video',
 ]

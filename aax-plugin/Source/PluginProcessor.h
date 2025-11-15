@@ -159,6 +159,11 @@ public:
      * @param prompt            Text prompt describing desired audio (e.g., "thunder and rain")
      * @param negativePrompt    Sounds to avoid (default: "voices, music")
      * @param seed              Random seed for reproducibility (default: 42)
+     * @param videoClipOffset   Timeline position where video clip starts (e.g., "00:02")
+     *                          Used to calculate offset into source video for trimming.
+     *                          Empty string means video starts at timeline beginning (00:00:00:00)
+     * @param timelineInSeconds Timeline selection start in seconds (for trimming calculation)
+     * @param timelineOutSeconds Timeline selection end in seconds (for trimming calculation)
      * @param errorMessage      [OUT] Pointer to string that will receive error details on failure
      *                          Pass nullptr if you don't need error details
      * 
@@ -173,6 +178,12 @@ public:
         const juce::String& prompt,
         const juce::String& negativePrompt = DEFAULT_NEGATIVE_PROMPT,
         int seed = DEFAULT_SEED,
+        const juce::String& videoClipOffset = "",
+        float timelineInSeconds = 0.0f,
+        float timelineOutSeconds = 0.0f,
+        bool autoDetectClipBounds = false,
+        float clipStartSeconds = -1.0f,
+        float clipEndSeconds = -1.0f,
         juce::String* errorMessage = nullptr
     );
     

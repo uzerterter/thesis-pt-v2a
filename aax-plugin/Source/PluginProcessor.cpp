@@ -300,6 +300,12 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     const juce::String& prompt,
     const juce::String& negativePrompt,
     int seed,
+    const juce::String& videoClipOffset,
+    float timelineInSeconds,
+    float timelineOutSeconds,
+    bool autoDetectClipBounds,
+    float clipStartSeconds,
+    float clipEndSeconds,
     juce::String* errorMessage)
 {
     juce::Logger::writeToLog ("=== MMAudio Generation Started ===");
@@ -364,6 +370,57 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     
     commandArray.add ("--seed");
     commandArray.add (juce::String (seed));
+    
+    // WORKFLOW 1: Manual offset WITH clip bounds (trimmed clip + manual offset)
+    // Priority: Manual offset > Clip bounds > Auto-detect
+    if (videoClipOffset.isNotEmpty() && clipStartSeconds >= 0.0f)
+    {
+        // Special case: Manual offset on trimmed clip
+        // Need BOTH clip bounds (where clip starts in source) AND manual offset (timeline position)
+        // Python will calculate: source_start = clip_source_start + (timeline_start - clip_timeline_start)
+        commandArray.add ("--video-offset");
+        commandArray.add (videoClipOffset);
+        commandArray.add ("--timeline-start");
+        commandArray.add (juce::String (timelineInSeconds));
+        commandArray.add ("--timeline-end");
+        commandArray.add (juce::String (timelineOutSeconds));
+        commandArray.add ("--clip-start-seconds");
+        commandArray.add (juce::String (clipStartSeconds, 3));
+        commandArray.add ("--clip-end-seconds");
+        commandArray.add (juce::String (clipEndSeconds, 3));
+        juce::Logger::writeToLog ("Manual Offset (trimmed clip): " + videoClipOffset);
+        juce::Logger::writeToLog ("Clip Bounds: " + juce::String (clipStartSeconds, 3) + "s - " + juce::String (clipEndSeconds, 3) + "s");
+        juce::Logger::writeToLog ("Timeline: " + juce::String (timelineInSeconds) + "s - " + juce::String (timelineOutSeconds) + "s");
+    }
+    // WORKFLOW 2: Clip bounds only (auto-detect, trimmed clip, no manual offset)
+    else if (clipStartSeconds >= 0.0f && clipEndSeconds >= 0.0f)
+    {
+        commandArray.add ("--clip-start-seconds");
+        commandArray.add (juce::String (clipStartSeconds, 3));
+        commandArray.add ("--clip-end-seconds");
+        commandArray.add (juce::String (clipEndSeconds, 3));
+        juce::Logger::writeToLog ("Clip Bounds (seconds): " + juce::String (clipStartSeconds, 3) + " - " + juce::String (clipEndSeconds, 3));
+    }
+    // WORKFLOW 3: Manual offset WITHOUT clip bounds (untrimmed clip + manual offset)
+    else if (videoClipOffset.isNotEmpty())
+    {
+        commandArray.add ("--video-offset");
+        commandArray.add (videoClipOffset);
+        juce::Logger::writeToLog ("Video Clip Offset: " + videoClipOffset);
+        
+        // Also pass timeline selection times (in seconds) for trimming calculation
+        commandArray.add ("--timeline-start");
+        commandArray.add (juce::String (timelineInSeconds));
+        commandArray.add ("--timeline-end");
+        commandArray.add (juce::String (timelineOutSeconds));
+        juce::Logger::writeToLog ("Timeline Selection (seconds): " + juce::String (timelineInSeconds) + " - " + juce::String (timelineOutSeconds));
+    }
+    // WORKFLOW 3 (LEGACY): Auto-detect in background (unsafe from plugin, causes deadlock)
+    else if (autoDetectClipBounds)
+    {
+        commandArray.add ("--auto-detect-clip-bounds");
+        juce::Logger::writeToLog ("⚠️ WARNING: Auto-detect clip boundaries in background (may cause deadlock from plugin!)");
+    }
     
     // Generate predictable output path in temp directory
     auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);

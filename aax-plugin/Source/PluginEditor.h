@@ -135,6 +135,56 @@ private:
     /** Storage for available video file paths */
     juce::StringArray availableVideoPaths;
     
+    /**
+     * Label for video clip offset input
+     */
+    juce::Label videoOffsetLabel { {}, "Video Clip Start (if processing partial clip):" };
+    
+    /**
+     * Text input for video clip start position on timeline
+     * Format: Timecode (e.g., "00:02" or "00:00:02:00")
+     * 
+     * Purpose:
+     *   When user wants to render only part of a video clip, they need to
+     *   specify where the video clip starts on the Pro Tools timeline.
+     *   
+     * Example:
+     *   - Video clip placed at 00:00:02:00 on timeline
+     *   - User selects region from 00:00:05:00 to 00:00:12:00
+     *   - User enters "00:02" in this field
+     *   - System calculates: offset_in_video = 5 - 2 = 3 seconds
+     *   - FFmpeg trims video: -ss 3 -t 7 (from second 3, duration 7)
+     * 
+     * Notes:
+     *   - Leave empty if video clip starts at 00:00:00:00 (timeline beginning)
+     *   - Format is flexible: "02", "00:02", "00:00:02:00" all work
+     *   - Used only when trimming video with FFmpeg
+     *   - Disabled when autoDetectClipBoundsToggle is enabled
+     */
+    juce::TextEditor videoOffsetInput;
+    
+    /**
+     * Toggle button for automatic clip boundary detection
+     * 
+     * When enabled:
+     *   - System reads clip boundaries directly from Pro Tools Clips List
+     *   - No manual video offset input needed
+     *   - Works best when video clip is cut/trimmed in Pro Tools
+     * 
+     * Workflow:
+     *   1. User cuts video clip in Pro Tools (using Blade tool)
+     *   2. User selects the trimmed clip
+     *   3. Enables this toggle
+     *   4. System automatically detects start/end frames from clip
+     *   5. FFmpeg trims video using detected boundaries
+     * 
+     * Notes:
+     *   - When enabled, videoOffsetInput is disabled and ignored
+     *   - Requires video clip to be in Pro Tools Clips List
+     *   - Uses GetClipList PTSL command (Pro Tools 2025.06+)
+     */
+    juce::ToggleButton autoDetectClipBoundsToggle { "Auto-detect clip boundaries from Pro Tools" };
+    
     //==============================================================================
     // Event Handlers
     //==============================================================================
@@ -230,6 +280,31 @@ private:
      */
     void handleAudioImportResult (const juce::String& output);
     
+    /**
+     * Start async clip bounds reading via PTSL (Phase 1 of auto-trim workflow).
+     * Launches Python script with --action get_clip_bounds to read clip boundaries.
+     * Returns quickly - actual result handling happens in handleClipBoundsResult().
+     * 
+     * @param videoPath Path to source video file (stored for later generation)
+     */
+    void startClipBoundsRead (const juce::String& videoPath);
+    
+    /**
+     * Handle clip bounds result (called from timer callback).
+     * Parses JSON output with clip boundaries and stores in member variables.
+     * Then proceeds to Phase 2: background audio generation with clip bounds.
+     * 
+     * @param output Raw JSON output from Python get_clip_bounds action
+     */
+    void handleClipBoundsResult (const juce::String& output);
+    
+    /**
+     * Get source video file duration via FFprobe
+     * @param videoPath Path to video file
+     * @return Duration in seconds, or 0.0f if failed
+     */
+    float getSourceVideoDuration (const juce::String& videoPath);
+    
     //==============================================================================
     // Async State
     //==============================================================================
@@ -239,6 +314,7 @@ private:
     {
         Idle,                    // No operation in progress
         ReadingTimeline,         // Reading timeline selection via PTSL
+        ReadingClipBounds,       // Reading clip boundaries via PTSL (for auto-trim detection)
         GeneratingAudio,         // Python generating audio (polling for output file)
         ImportingAudio          // Importing audio to Pro Tools via PTSL
     };
@@ -260,6 +336,17 @@ private:
     
     /** Timeline selection timecode (stored for audio import positioning) */
     juce::String timelineInTime;  // e.g., "00:00:07:00"
+    
+    /** Timeline selection in seconds (for video trimming calculations) */
+    float timelineInSeconds = 0.0f;
+    float timelineOutSeconds = 0.0f;
+    
+    /** Clip boundaries in seconds (for auto-trim workflow) */
+    float clipStartSeconds = -1.0f;  // -1 = not set
+    float clipEndSeconds = -1.0f;    // -1 = not set
+    
+    /** Flag indicating if video clip is trimmed (shorter than source) */
+    bool clipIsTrimmed = false;
     
     /** Timeout for PTSL calls (milliseconds) */
     static constexpr int PTSL_TIMEOUT_MS = 10000;  // 10 seconds

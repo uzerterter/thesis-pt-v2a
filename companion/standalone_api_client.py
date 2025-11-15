@@ -40,6 +40,8 @@ Note:
 import argparse
 import sys
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -71,6 +73,7 @@ from ptsl_integration import (
     timecode_to_seconds,
     get_video_file_from_protools,
     import_audio_to_pro_tools,
+    export_timeline_selection_as_video,
 )
 
 # Legacy configuration (for backwards compatibility)
@@ -154,6 +157,37 @@ Examples:
         help='Automatically import generated audio to Pro Tools timeline via PTSL'
     )
     
+    parser.add_argument(
+        '--video-offset',
+        type=str,
+        default='',
+        help='Timeline position where video clip starts (e.g., "00:02" or "00:00:02:00"). '
+             'Used to calculate offset into source video when trimming. '
+             'Leave empty if video starts at timeline beginning (00:00:00:00).'
+    )
+    
+    parser.add_argument(
+        '--timeline-start',
+        type=float,
+        default=0.0,
+        help='Timeline selection start time in seconds (passed from C++ plugin)'
+    )
+    
+    parser.add_argument(
+        '--timeline-end',
+        type=float,
+        default=0.0,
+        help='Timeline selection end time in seconds (passed from C++ plugin)'
+    )
+    
+    parser.add_argument(
+        '--auto-detect-clip-bounds',
+        action='store_true',
+        help='Automatically detect video clip boundaries from Pro Tools Clips List. '
+             'Use when video clip is cut/trimmed in Pro Tools. '
+             'When enabled, --video-offset is ignored.'
+    )
+    
     # Advanced parameters
     parser.add_argument(
         '--duration', '-d',
@@ -222,9 +256,22 @@ Examples:
     parser.add_argument(
         '--action',
         type=str,
-        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'trim_video', 'validate_duration', 'get_duration', 'import_audio'],
+        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'export_video', 'trim_video', 'validate_duration', 'get_duration', 'import_audio', 'clip_detect_and_trim', 'get_clip_bounds'],
         default='generate',
         help='Action to perform (default: generate)'
+    )
+    
+    # Clip bounds parameters (for background trimming)
+    parser.add_argument(
+        '--clip-start-seconds',
+        type=float,
+        help='Clip start time in seconds (for background trimming)'
+    )
+    
+    parser.add_argument(
+        '--clip-end-seconds',
+        type=float,
+        help='Clip end time in seconds (for background trimming)'
     )
     
     # Audio import parameter
@@ -322,6 +369,27 @@ def main():
     # Parse command line arguments  
     args = parse_arguments()
     
+    # DEBUG: File-based logging for background processes (stdout/stderr not captured!)
+    import tempfile
+    log_file = os.path.join(tempfile.gettempdir(), "pt_v2a_debug.log")
+    
+    def log_debug(msg):
+        """Write to file, stdout, and stderr for maximum visibility"""
+        with open(log_file, "a", encoding="utf-8") as f:
+            timestamp = __import__('datetime').datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            f.write(f"[{timestamp}] {msg}\n")
+            f.flush()
+        print(msg)
+        print(msg, file=sys.stderr)
+        sys.stdout.flush()
+        sys.stderr.flush()
+    
+    log_debug(f"=== DEBUG: Script started, sys.argv={sys.argv} ===")
+    log_debug(f"=== DEBUG: Log file: {log_file} ===")
+    log_debug(f"=== DEBUG: args.action={args.action} ===")
+    log_debug(f"=== DEBUG: args.auto_detect_clip_bounds={args.auto_detect_clip_bounds} ===")
+    log_debug(f"=== DEBUG: args.video={args.video} ===")
+    
     # Determine operation mode
     quiet = args.quiet
     verbose = args.verbose
@@ -355,6 +423,77 @@ def main():
         
         # Force immediate exit to avoid hanging
         sys.exit(0 if result['success'] else 1)
+    
+    elif args.action == 'get_clip_bounds':
+        """Get clip boundaries from Pro Tools Clips List (async, fast, no deadlock!)"""
+        log_debug(f"=== DEBUG: get_clip_bounds action START ===")
+        
+        try:
+            # Import PTSL
+            from ptsl import open_engine
+            from ptsl_integration.clip_info import (
+                get_session_framerate,
+                get_clip_info_for_selected_video,
+                calculate_trim_points_from_clip
+            )
+            
+            log_debug("Connecting to Pro Tools for clip bounds...")
+            
+            # Connect to Pro Tools (this is FAST - just reads data, no waiting!)
+            with open_engine(
+                company_name="YourCompany",
+                application_name="ProTools V2A Plugin"
+            ) as engine:
+                log_debug("Connected!")
+                
+                # Get framerate
+                fps = get_session_framerate(engine)
+                log_debug(f"Framerate: {fps} fps")
+                
+                # Get clip info
+                clip_info = get_clip_info_for_selected_video(engine)
+                
+                if not clip_info:
+                    result = {
+                        'success': False,
+                        'error': 'No video clip found in Clips List'
+                    }
+                    log_debug(f"ERROR: {result['error']}")
+                    print(json.dumps(result))
+                    sys.exit(1)
+                
+                # Calculate trim points
+                trim_info = calculate_trim_points_from_clip(clip_info, fps)
+                
+                result = {
+                    'success': True,
+                    'clip_name': clip_info.get('clip_name', 'Unknown'),
+                    'start_seconds': trim_info['start_seconds'],
+                    'end_seconds': trim_info['end_seconds'],
+                    'duration_seconds': trim_info['duration_seconds'],
+                    'start_frame': trim_info['start_frame'],
+                    'end_frame': trim_info['end_frame'],
+                    'fps': fps
+                }
+                
+                log_debug(f"Clip bounds: {result['start_seconds']}s - {result['end_seconds']}s")
+                print(json.dumps(result))
+                sys.stdout.flush()
+                sys.exit(0)
+                
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            log_debug(f"ERROR: {error_msg}")
+            log_debug(traceback.format_exc())
+            
+            result = {
+                'success': False,
+                'error': error_msg
+            }
+            print(json.dumps(result))
+            sys.stdout.flush()
+            sys.exit(1)
     
     elif args.action == 'get_video_info':
         """Get timeline selection AND video file in one PTSL call (faster!)"""
@@ -414,6 +553,29 @@ def main():
         result = get_video_file_from_protools()
         print(json.dumps(result))
         return 0 if result['success'] else 1
+    
+    elif args.action == 'export_video':
+        """Export timeline selection as video file (handles cut/trimmed clips)"""
+        print(f"=== DEBUG: export_video action START ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Export timeline selection
+        result = export_timeline_selection_as_video(
+            company_name="MyCompany",
+            app_name="pt_v2a"
+        )
+        
+        print(f"=== DEBUG: Export result: {result['success']} ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Return result as JSON
+        print(json.dumps(result))
+        sys.stdout.flush()
+        
+        print(f"=== DEBUG: Export result sent, exiting... ===", file=sys.stderr)
+        sys.stderr.flush()
+        
+        sys.exit(0 if result['success'] else 1)
     
     elif args.action == 'trim_video':
         """Trim video segment"""
@@ -542,6 +704,119 @@ def main():
             sys.stdout.flush()
             sys.exit(1)
     
+    elif args.action == 'clip_detect_and_trim':
+        """Detect clip boundaries and trim video (synchronous, foreground)"""
+        log_debug(f"=== DEBUG: clip_detect_and_trim action START ===")
+        
+        if not args.video:
+            error_result = {
+                'success': False,
+                'error': '--video argument required for clip_detect_and_trim action'
+            }
+            log_debug(f"ERROR: {error_result['error']}")
+            print(json.dumps(error_result))
+            sys.exit(1)
+        
+        log_debug(f"Video path: {args.video}")
+        
+        try:
+            # Import PTSL modules
+            log_debug("Importing PTSL...")
+            from ptsl import open_engine
+            from ptsl_integration.clip_info import (
+                get_session_framerate,
+                get_clip_info_for_selected_video,
+                calculate_trim_points_from_clip
+            )
+            log_debug("PTSL imported successfully")
+            
+            # Connect to Pro Tools (FOREGROUND = has UI access!)
+            log_debug("Connecting to Pro Tools...")
+            with open_engine(
+                company_name="YourCompany",
+                application_name="ProTools V2A Plugin"
+            ) as engine:
+                log_debug("Connected to Pro Tools")
+                
+                # Get session framerate
+                fps = get_session_framerate(engine)
+                log_debug(f"Session framerate: {fps} fps")
+                
+                # Get clip info from Clips List
+                log_debug("Getting clip info...")
+                clip_info = get_clip_info_for_selected_video(engine)
+                
+                if not clip_info:
+                    error_result = {
+                        'success': False,
+                        'error': 'No video clip found in Clips List. Make sure a video clip is selected.'
+                    }
+                    log_debug(f"ERROR: {error_result['error']}")
+                    print(json.dumps(error_result))
+                    sys.exit(1)
+                
+                clip_name = clip_info.get('clip_name', 'Unknown')
+                start_frame = clip_info['start_frame']
+                end_frame = clip_info['end_frame']
+                log_debug(f"Found clip '{clip_name}': frames {start_frame}-{end_frame}")
+                
+                # Calculate trim points
+                trim_info = calculate_trim_points_from_clip(clip_info, fps)
+                start_seconds = trim_info['start_seconds']
+                end_seconds = trim_info['end_seconds']
+                log_debug(f"Trim points: {start_seconds}s - {end_seconds}s")
+            
+            # Trim video using FFmpeg
+            log_debug(f"Trimming video: {start_seconds}s - {end_seconds}s")
+            trim_result = trim_video_segment(
+                video_path=args.video,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds
+            )
+            
+            if not trim_result['success']:
+                error_result = {
+                    'success': False,
+                    'error': f"Video trimming failed: {trim_result['error']}"
+                }
+                log_debug(f"ERROR: {error_result['error']}")
+                print(json.dumps(error_result))
+                sys.exit(1)
+            
+            trimmed_path = trim_result['output_path']
+            log_debug(f"Trimmed video saved: {trimmed_path}")
+            
+            # Return success with trimmed video path
+            result = {
+                'success': True,
+                'trimmed_video_path': trimmed_path,
+                'clip_name': clip_name,
+                'start_seconds': start_seconds,
+                'end_seconds': end_seconds,
+                'duration_seconds': trim_info['duration_seconds']
+            }
+            
+            print(json.dumps(result))
+            sys.stdout.flush()
+            sys.exit(0)
+            
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            traceback_str = traceback.format_exc()
+            
+            log_debug(f"ERROR: {error_msg}")
+            log_debug(f"Traceback:\n{traceback_str}")
+            
+            error_result = {
+                'success': False,
+                'error': error_msg,
+                'traceback': traceback_str
+            }
+            print(json.dumps(error_result))
+            sys.stdout.flush()
+            sys.exit(1)
+    
     # =============================================================================
     # Standard Generation Mode (action == 'generate')
     # =============================================================================
@@ -590,6 +865,13 @@ def main():
         
         # === COMMON PROCESSING ===
         
+        # Force WAV format if importing to Pro Tools (PTSL requires WAV)
+        if args.import_to_protools and args.output_format != 'wav':
+            if not quiet:
+                print(f"\n⚠️  Forcing WAV format (Pro Tools requires WAV, not FLAC)")
+            print(f"=== DEBUG: Forcing output_format to 'wav' for Pro Tools import ===", file=sys.stderr)
+            args.output_format = 'wav'
+        
         # Check API health
         if not quiet:
             print(f"\n🔗 Checking API connection to {args.api_url}...")
@@ -620,6 +902,342 @@ def main():
                 else:
                     print("📦 No models loaded yet (will load on first request)")
         
+        # === Video Trimming (Four workflows supported) ===
+        # 1. MANUAL OFFSET + CLIP BOUNDS (trimmed clip + manual offset): Both --video-offset AND --clip-start-seconds provided
+        # 2. CLIP BOUNDS ONLY (auto-detect): --clip-start-seconds and --clip-end-seconds provided
+        # 3. MANUAL OFFSET ONLY (untrimmed clip): --video-offset provided
+        # 4. AUTO-DETECT (legacy): --auto-detect-clip-bounds (runs PTSL in background - can deadlock!)
+        
+        # NEW Workflow 1: Manual offset on TRIMMED clip (combined workflow)
+        # When user provides manual offset AND we have clip bounds, we need BOTH to calculate correctly:
+        # source_start = clip_source_start + (timeline_start - clip_timeline_start)
+        if args.video_offset and args.clip_start_seconds is not None and args.clip_end_seconds is not None:
+            log_debug(f"=== DEBUG: Manual offset + clip bounds (trimmed clip workflow) ===")
+            log_debug(f"Video offset (timeline pos): {args.video_offset}")
+            log_debug(f"Clip bounds (source): {args.clip_start_seconds}s - {args.clip_end_seconds}s")
+            
+            if not quiet:
+                print(f"\n✂️  Manual offset on trimmed clip...")
+                print(f"   Clip bounds: {args.clip_start_seconds:.3f}s - {args.clip_end_seconds:.3f}s in source")
+            
+            # Parse video offset to timeline seconds
+            try:
+                video_clip_timeline_start = timecode_to_seconds(args.video_offset)
+                log_debug(f"Video clip timeline position: {video_clip_timeline_start}s")
+            except Exception as e:
+                error_msg = f"Failed to parse video offset '{args.video_offset}': {e}"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                return 1
+            
+            # Get timeline selection
+            if args.timeline_start == 0.0 and args.timeline_end == 0.0:
+                error_msg = "Timeline selection required (--timeline-start and --timeline-end) with --video-offset"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                return 1
+            
+            timeline_in_seconds = args.timeline_start
+            timeline_out_seconds = args.timeline_end
+            
+            log_debug(f"Timeline selection: {timeline_in_seconds}s - {timeline_out_seconds}s")
+            
+            # Calculate: source_start = clip_source_start + (timeline_start - clip_timeline_start)
+            relative_in_clip = timeline_in_seconds - video_clip_timeline_start
+            start_in_source = args.clip_start_seconds + relative_in_clip
+            end_in_source = args.clip_start_seconds + (timeline_out_seconds - video_clip_timeline_start)
+            
+            log_debug(f"Relative offset in clip: {relative_in_clip}s")
+            log_debug(f"Final source range: {start_in_source}s - {end_in_source}s")
+            
+            if relative_in_clip < 0:
+                error_msg = f"Selection starts before clip (timeline={timeline_in_seconds}s, clip_start={video_clip_timeline_start}s)"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                return 1
+            
+            if not quiet:
+                print(f"   Timeline selection: {timeline_in_seconds}s - {timeline_out_seconds}s")
+                print(f"   Clip timeline position: {video_clip_timeline_start}s")
+                print(f"   Trimming source: {start_in_source:.3f}s - {end_in_source:.3f}s")
+            
+            # Trim video
+            trim_result = trim_video_segment(
+                video_path=video_path,
+                start_seconds=start_in_source,
+                end_seconds=end_in_source
+            )
+            
+            if not trim_result['success']:
+                error_msg = f"Video trimming failed: {trim_result.get('error', 'Unknown error')}"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                return 1
+            
+            video_path = trim_result['trimmed_video_path']
+            log_debug(f"=== DEBUG: Trimmed video saved to: {video_path} ===")
+            log_debug(f"=== DEBUG: Will use trimmed video: {video_path} ===")
+        
+        # Workflow 2: Clip bounds provided by C++ plugin (async, safe, no deadlock!)
+        elif args.clip_start_seconds is not None and args.clip_end_seconds is not None:
+            log_debug(f"=== DEBUG: Clip bounds provided by plugin ===")
+            log_debug(f"Start: {args.clip_start_seconds}s, End: {args.clip_end_seconds}s")
+            
+            if not quiet:
+                print(f"\n✂️  Trimming video to clip boundaries...")
+                print(f"   {args.clip_start_seconds:.3f}s - {args.clip_end_seconds:.3f}s")
+            
+            # Trim video using provided boundaries
+            trim_result = trim_video_segment(
+                video_path=video_path,
+                start_seconds=args.clip_start_seconds,
+                end_seconds=args.clip_end_seconds
+            )
+            
+            if not trim_result['success']:
+                error_msg = f"Video trimming failed: {trim_result['error']}"
+                log_debug(f"ERROR: {error_msg}")
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                return 1
+            
+            # Use trimmed video for generation
+            trimmed_video_path = trim_result['output_path']
+            log_debug(f"=== DEBUG: Trimmed video saved to: {trimmed_video_path} ===")
+            
+            if not quiet:
+                print(f"✅ Video trimmed successfully ({trim_result['duration']:.1f}s)")
+                print(f"   Trimmed video: {Path(trimmed_video_path).name}")
+            
+            # Replace video_path with trimmed version
+            video_path = trimmed_video_path
+            log_debug(f"=== DEBUG: Will use trimmed video: {video_path} ===")
+        
+        # Workflow 4 (LEGACY): Automatic clip detection (can cause deadlock if called from plugin!)
+        # This workflow is deprecated - use C++ async clip bounds read instead
+        elif args.auto_detect_clip_bounds:
+            log_debug(f"=== DEBUG: Automatic clip detection requested (legacy workflow) ===")
+            
+            if not quiet:
+                print(f"\n🔍 Auto-detecting clip boundaries from Pro Tools (legacy)...")
+            
+            log_debug(f"=== DEBUG: Starting PTSL imports... ===")
+            
+            try:
+                log_debug(f"=== DEBUG: Importing ptsl module... ===")
+                from ptsl import open_engine
+                log_debug(f"=== DEBUG: ptsl imported successfully ===")  
+                
+                log_debug(f"=== DEBUG: Importing clip_info functions... ===")
+                from ptsl_integration.clip_info import (
+                    get_session_framerate,
+                    get_clip_info_for_selected_video,
+                    calculate_trim_points_from_clip
+                )
+                log_debug(f"=== DEBUG: All imports successful! ===")
+                
+                # Connect to Pro Tools to read clip info
+                clip_timeline_position = None  # Store timeline position for later import
+                
+                log_debug(f"=== DEBUG: Opening PTSL engine connection... ===")
+                
+                with open_engine(
+                    company_name="YourCompany",
+                    application_name="ProTools V2A Plugin"
+                ) as engine:
+                    log_debug(f"=== DEBUG: PTSL engine connected ===")
+                    
+                    # Get session framerate
+                    log_debug(f"=== DEBUG: Getting session framerate... ===")
+                    fps = get_session_framerate(engine)
+                    log_debug(f"=== DEBUG: Session framerate: {fps} fps ===")
+                    
+                    if not quiet:
+                        print(f"   Session framerate: {fps} fps")
+                    
+                    # Get timeline selection (position where clip is placed)
+                    log_debug(f"=== DEBUG: Getting timeline selection... ===")
+                    import ptsl.PTSL_pb2 as pt
+                    timeline_in, timeline_out = engine.get_timeline_selection(pt.TimeCode)
+                    clip_timeline_position = timeline_in  # Store for audio import
+                    log_debug(f"=== DEBUG: Timeline position: {timeline_in} ===")
+                    
+                    if not quiet:
+                        print(f"   Timeline position: {timeline_in}")
+                    
+                    # Get clip info from Clips List
+                    log_debug(f"=== DEBUG: Getting clip info from Clips List... ===")
+                    clip_info = get_clip_info_for_selected_video(engine)
+                    log_debug(f"=== DEBUG: Clip info retrieved: {clip_info is not None} ===")
+                    
+                    if not clip_info:
+                        error_msg = "No video clip found in Clips List. Make sure a video clip is selected in Pro Tools."
+                        print(f"ERROR: {error_msg}", file=sys.stderr)
+                        if not quiet:
+                            print(f"❌ {error_msg}")
+                            print(f"   💡 Workflow:")
+                            print(f"      1. Cut video clip in Pro Tools (if needed)")
+                            print(f"      2. Select the clip")
+                            print(f"      3. Clip should appear in Clips List")
+                        return 1
+                    
+                    clip_name = clip_info.get('clip_name', 'Unknown')
+                    start_frame = clip_info['start_frame']
+                    end_frame = clip_info['end_frame']
+                    
+                    print(f"=== DEBUG: Found clip '{clip_name}': frames {start_frame}-{end_frame} ===", file=sys.stderr)
+                    
+                    if not quiet:
+                        print(f"   Found clip: {clip_name}")
+                        print(f"   Frame range: {start_frame} - {end_frame}")
+                    
+                    # Calculate trim points
+                    trim_info = calculate_trim_points_from_clip(clip_info, fps)
+                    start_seconds = trim_info['start_seconds']
+                    end_seconds = trim_info['end_seconds']
+                    duration = trim_info['duration_seconds']
+                    
+                    print(f"=== DEBUG: Trim points: {start_seconds}s - {end_seconds}s (duration: {duration}s) ===", file=sys.stderr)
+                    
+                    if not quiet:
+                        print(f"   Time range: {start_seconds:.3f}s - {end_seconds:.3f}s")
+                        print(f"   Duration: {duration:.3f}s")
+                
+                # Trim video using detected boundaries
+                log_debug(f"=== DEBUG: Starting video trim: {start_seconds}s - {end_seconds}s ===")
+                
+                if not quiet:
+                    print(f"   Trimming source video to clip boundaries...")
+                
+                trim_result = trim_video_segment(
+                    video_path=video_path,
+                    start_seconds=start_seconds,
+                    end_seconds=end_seconds
+                )
+                
+                log_debug(f"=== DEBUG: Trim result: success={trim_result['success']} ===")
+                
+                if not trim_result['success']:
+                    error_msg = f"Video trimming failed: {trim_result['error']}"
+                    log_debug(f"ERROR: {error_msg}")
+                    if not quiet:
+                        print(f"❌ {error_msg}")
+                    return 1
+                
+                # Use trimmed video for generation
+                trimmed_video_path = trim_result['output_path']
+                log_debug(f"=== DEBUG: Trimmed video saved to: {trimmed_video_path} ===")
+                log_debug(f"=== DEBUG: Replacing video_path for generation ===")
+                
+                if not quiet:
+                    print(f"✅ Video trimmed successfully ({trim_result['duration']:.1f}s)")
+                    print(f"   Trimmed video: {Path(trimmed_video_path).name}")
+                
+                # Replace video_path with trimmed version
+                video_path = trimmed_video_path
+                
+                log_debug(f"=== DEBUG: Will use trimmed video: {video_path} ===")
+                
+            except Exception as e:
+                import traceback
+                error_msg = f"Automatic clip detection failed: {e}"
+                traceback_str = traceback.format_exc()
+                log_debug(f"ERROR: {error_msg}")
+                log_debug(f"=== DEBUG: Traceback ===")
+                # Log each line of traceback separately for better visibility
+                for line in traceback_str.split('\n'):
+                    if line.strip():
+                        log_debug(line)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                    print(f"   💡 Try using manual --video-offset instead")
+                return 1
+        
+        # Workflow 3: Manual video offset WITHOUT clip bounds (untrimmed clip only)
+        # This workflow assumes the clip starts at the beginning of the source video
+        elif args.video_offset:
+            if not quiet:
+                print(f"\n✂️  Manual offset (untrimmed clip): {args.video_offset}")
+                print(f"   Trimming video to match timeline selection...")
+            
+            print(f"=== DEBUG: Manual offset workflow (untrimmed) ===", file=sys.stderr)
+            print(f"=== DEBUG: Video offset={args.video_offset} ===", file=sys.stderr)
+            
+            # Parse video offset to seconds (function already imported at top)
+            try:
+                video_clip_start_seconds = timecode_to_seconds(args.video_offset)
+                print(f"=== DEBUG: Video clip starts at {video_clip_start_seconds}s on timeline ===", file=sys.stderr)
+            except Exception as e:
+                error_msg = f"Failed to parse video offset '{args.video_offset}': {e}"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                    print(f"   Video offset format: 'MM:SS' or 'HH:MM:SS:FF'")
+                return 1
+            
+            # Get timeline selection from C++ plugin parameters (passed via --timeline-start/end)
+            if args.timeline_start == 0.0 and args.timeline_end == 0.0:
+                error_msg = "Timeline selection times not provided (--timeline-start and --timeline-end required with --video-offset)"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                return 1
+            
+            timeline_in_seconds = args.timeline_start
+            timeline_out_seconds = args.timeline_end
+            
+            print(f"=== DEBUG: Timeline selection (from C++ plugin): {timeline_in_seconds}s - {timeline_out_seconds}s ===", file=sys.stderr)
+            
+            # Calculate offset into source video (round to full seconds)
+            # Example: Video starts at 2s on timeline, selection starts at 5s
+            #          → Need to start at (5-2) = 3s into source video
+            start_in_video = round(timeline_in_seconds - video_clip_start_seconds)
+            end_in_video = round(timeline_out_seconds - video_clip_start_seconds)
+            
+            if start_in_video < 0:
+                error_msg = f"Invalid offset: Selection starts before video clip (selection={timeline_in_seconds}s, clip_start={video_clip_start_seconds}s)"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                    print(f"   Make sure video clip offset is correct")
+                return 1
+            
+            if not quiet:
+                print(f"   Timeline selection: {timeline_in_seconds}s - {timeline_out_seconds}s")
+                print(f"   Video clip starts at: {video_clip_start_seconds}s")
+                print(f"   Trimming source video: {start_in_video}s - {end_in_video}s")
+            
+            print(f"=== DEBUG: Trimming video from {start_in_video}s to {end_in_video}s ===", file=sys.stderr)
+            
+            # Trim video (function already imported at top)
+            trim_result = trim_video_segment(
+                video_path=video_path,
+                start_seconds=start_in_video,
+                end_seconds=end_in_video
+            )
+            
+            if not trim_result['success']:
+                error_msg = f"Video trimming failed: {trim_result['error']}"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                if not quiet:
+                    print(f"❌ {error_msg}")
+                return 1
+            
+            # Use trimmed video for generation
+            trimmed_video_path = trim_result['output_path']
+            print(f"=== DEBUG: Trimmed video saved to: {trimmed_video_path} ===", file=sys.stderr)
+            
+            if not quiet:
+                print(f"✅ Video trimmed successfully ({trim_result['duration']:.1f}s)")
+                print(f"   Trimmed video: {Path(trimmed_video_path).name}")
+            
+            # Replace video_path with trimmed version
+            video_path = trimmed_video_path
+        
         # Generate audio
         output_file = generate_audio(
             api_url=args.api_url,
@@ -648,10 +1266,18 @@ def main():
                 print(f"=== DEBUG: Starting PTSL import ===", file=sys.stderr)
                 print(f"Audio file: {output_file}", file=sys.stderr)
                 
+                # Use clip timeline position if available (from auto-detect workflow)
+                import_timecode = None
+                if args.auto_detect_clip_bounds and 'clip_timeline_position' in locals():
+                    import_timecode = clip_timeline_position
+                    print(f"=== DEBUG: Importing at clip position: {import_timecode} ===", file=sys.stderr)
+                    if not quiet:
+                        print(f"   Importing at timeline position: {import_timecode}")
+                
                 try:
                     success = import_audio_to_pro_tools(
                         audio_path=output_file,
-                        location="SessionStart"
+                        timecode=import_timecode  # Use timeline position or None (session start)
                     )
                     
                     if success:

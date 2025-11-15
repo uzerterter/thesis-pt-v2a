@@ -11,13 +11,17 @@ from typing import Dict
 
 def timecode_to_seconds(timecode: str, fps: float = 30.0) -> float:
     """
-    Convert Pro Tools timecode format to seconds.
+    Convert timecode format to seconds.
     
-    Pro Tools uses "HH:MM:SS:FF" format where FF is frame number.
+    Supports multiple formats:
+    - "HH:MM:SS:FF" - Pro Tools format with frames (e.g., "00:00:10:15")
+    - "HH:MM:SS" - Standard timecode (e.g., "00:00:10")
+    - "MM:SS" - Minutes and seconds (e.g., "01:30")
+    - "SS" - Seconds only (e.g., "45")
     
     Args:
-        timecode (str): Timecode string (e.g., "00:00:10:15")
-        fps (float): Frame rate (default: 30.0, common in NTSC video)
+        timecode (str): Timecode string in any supported format
+        fps (float): Frame rate for frame-based timecodes (default: 30.0)
     
     Returns:
         float: Time in seconds
@@ -25,29 +29,42 @@ def timecode_to_seconds(timecode: str, fps: float = 30.0) -> float:
     Example:
         >>> timecode_to_seconds("00:00:10:00", fps=30.0)
         10.0
-        >>> timecode_to_seconds("00:01:00:15", fps=30.0)
-        60.5
-    
-    Note:
-        Based on py-ptsl's util.timecode_info() function which handles
-        various frame rates (23.976, 24, 25, 29.97, 30, etc.)
+        >>> timecode_to_seconds("00:00:10")
+        10.0
+        >>> timecode_to_seconds("01:30")
+        90.0
+        >>> timecode_to_seconds("0:13")
+        13.0
+        >>> timecode_to_seconds("45")
+        45.0
     """
     try:
         parts = timecode.split(':')
-        if len(parts) != 4:
-            raise ValueError(f"Invalid timecode format: {timecode} (expected HH:MM:SS:FF)")
         
-        hours, minutes, seconds, frames = map(int, parts)
+        if len(parts) == 4:
+            # Full Pro Tools format: HH:MM:SS:FF
+            hours, minutes, seconds, frames = map(int, parts)
+            total_seconds = (
+                hours * 3600 +
+                minutes * 60 +
+                seconds +
+                frames / fps
+            )
+        elif len(parts) == 3:
+            # Standard format: HH:MM:SS
+            hours, minutes, seconds = map(int, parts)
+            total_seconds = hours * 3600 + minutes * 60 + seconds
+        elif len(parts) == 2:
+            # Short format: MM:SS
+            minutes, seconds = map(int, parts)
+            total_seconds = minutes * 60 + seconds
+        elif len(parts) == 1:
+            # Seconds only: SS
+            total_seconds = int(parts[0])
+        else:
+            raise ValueError(f"Invalid timecode format: {timecode}")
         
-        # Convert to total seconds
-        total_seconds = (
-            hours * 3600 +
-            minutes * 60 +
-            seconds +
-            frames / fps
-        )
-        
-        return total_seconds
+        return float(total_seconds)
         
     except (ValueError, IndexError) as e:
         raise ValueError(f"Failed to parse timecode '{timecode}': {e}")
