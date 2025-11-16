@@ -173,29 +173,69 @@ class SmartVideoCache:
         logger.info(f"🕒 TTL cleanup thread started (interval: {max(ttl_minutes // 6, 5)} minutes)")
     
     def _estimate_tensor_size_mb(self, video_info) -> float:
-        """Estimate memory usage of video_info object in MB"""
+        """
+        Estimate memory usage of video_info object in MB
+        
+        IMPORTANT: Must count ALL tensors recursively, not just clip_frames/sync_frames!
+        video_info contains many nested tensors that were previously uncounted.
+        """
         try:
-            # Rough estimation based on typical video tensor sizes
-            # clip_frames: [T, H, W, C] float32 tensors
-            # sync_frames: [T, H, W, C] float32 tensors
             size_bytes = 0
             
-            if hasattr(video_info, 'clip_frames') and video_info.clip_frames is not None:
-                # Typical: [8-16 frames, 224, 224, 3] * 4 bytes/float32
-                frames_size = video_info.clip_frames.numel() * 4  # float32 = 4 bytes
-                size_bytes += frames_size
+            # Recursively find all tensors in video_info object
+            def count_tensors(obj, visited=None):
+                if visited is None:
+                    visited = set()
+                
+                # Avoid circular references
+                obj_id = id(obj)
+                if obj_id in visited:
+                    return 0
+                visited.add(obj_id)
+                
+                total = 0
+                
+                # Count torch.Tensor objects
+                if isinstance(obj, torch.Tensor):
+                    # element_size() returns bytes per element
+                    # numel() returns total number of elements
+                    total += obj.element_size() * obj.numel()
+                
+                # Recursively check attributes (for dataclass/object attributes)
+                elif hasattr(obj, '__dict__'):
+                    for attr_value in obj.__dict__.values():
+                        total += count_tensors(attr_value, visited)
+                
+                # Recursively check dict values
+                elif isinstance(obj, dict):
+                    for value in obj.values():
+                        total += count_tensors(value, visited)
+                
+                # Recursively check list/tuple items
+                elif isinstance(obj, (list, tuple)):
+                    for item in obj:
+                        total += count_tensors(item, visited)
+                
+                return total
             
-            if hasattr(video_info, 'sync_frames') and video_info.sync_frames is not None:
-                sync_size = video_info.sync_frames.numel() * 4
-                size_bytes += sync_size
+            size_bytes = count_tensors(video_info)
             
-            # Add overhead for Python objects (~20%)
+            # Add overhead for Python objects and CUDA alignment (~20%)
             size_bytes = int(size_bytes * 1.2)
-            return size_bytes / (1024 * 1024)  # Convert to MB
             
-        except Exception:
-            # Fallback estimation: ~200MB per video (conservative)
-            return 200.0
+            size_mb = size_bytes / (1024 * 1024)
+            
+            # Sanity check: if estimation seems too low, use conservative fallback
+            if size_mb < 50:  # Videos should be at least 50 MB
+                logger.warning(f"Suspiciously low size estimate: {size_mb:.1f}MB, using fallback 500MB")
+                return 500.0
+            
+            return size_mb
+            
+        except Exception as e:
+            logger.error(f"Size estimation failed: {e}, using fallback")
+            # Fallback: conservative estimate for safety
+            return 500.0
     
     def _cleanup_expired(self):
         """Remove expired entries based on TTL"""
@@ -211,6 +251,11 @@ class SmartVideoCache:
             self.stats['evictions_ttl'] += 1
             self.stats['current_size_mb'] -= entry.estimated_size_mb
             self.stats['total_entries'] -= 1
+            
+            # Explicitly delete tensors to free memory
+            del entry.data
+            del entry
+            
             logger.info(f"🕒 TTL EVICTED: {key[:8]}... (age: {(current_time - entry.created_at)/60:.1f}min)")
     
     def _background_ttl_cleanup(self):
@@ -247,6 +292,11 @@ class SmartVideoCache:
             self.stats['evictions_lru'] += 1
             self.stats['current_size_mb'] -= entry.estimated_size_mb
             self.stats['total_entries'] -= 1
+            
+            # Explicitly delete tensors to free memory
+            del entry.data
+            del entry
+            
             logger.info(f"🗑️ LRU EVICTED: {key[:8]}... (freed: {entry.estimated_size_mb:.1f}MB)")
     
     def get(self, key: str) -> Optional[Any]:
@@ -272,7 +322,11 @@ class SmartVideoCache:
         """Cache video with size and TTL management"""
         with self._lock:
             current_time = time.time()
+            
+            # Measure size estimation time for performance tuning
+            size_estimation_start = time.time()
             estimated_size = self._estimate_tensor_size_mb(video_info)
+            size_estimation_time = time.time() - size_estimation_start
             
             # Remove existing entry if present
             if key in self.cache:
@@ -297,7 +351,7 @@ class SmartVideoCache:
             self._cleanup_expired()
             self._enforce_size_limit()
             
-            logger.info(f"💾 CACHED: {key[:8]}... ({estimated_size:.1f}MB, total: {self.stats['current_size_mb']:.1f}MB)")
+            logger.info(f"💾 CACHED: {key[:8]}... ({estimated_size:.1f}MB, total: {self.stats['current_size_mb']:.1f}MB) | Size estimation: {size_estimation_time*1000:.1f}ms")
     
     def get_stats(self) -> Dict:
         """Get cache statistics"""
@@ -312,8 +366,13 @@ class SmartVideoCache:
             }
     
     def clear(self):
-        """Clear all cached entries"""
+        """Clear all cached entries and force garbage collection"""
         with self._lock:
+            # Delete all entries explicitly before clearing
+            for key, entry in list(self.cache.items()):
+                del entry.data
+                del entry
+            
             self.cache.clear()
             self.stats = {
                 'hits': 0,
@@ -323,6 +382,11 @@ class SmartVideoCache:
                 'current_size_mb': 0,
                 'total_entries': 0
             }
+            
+            # Force garbage collection to free memory immediately
+            import gc
+            gc.collect()
+            logger.info("🧹 Cache cleared and garbage collected")
     
     def shutdown(self):
         """Stop background cleanup thread (called on server shutdown)"""
@@ -672,17 +736,48 @@ async def clear_cache():
 
 @app.post("/cache/clear-all")
 async def clear_all_cache():
-    """Clear both video and model cache (full reset)"""
+    """Clear both video and model cache (full reset with explicit memory cleanup)"""
+    import gc
+    
+    # Clear video cache (already has proper cleanup with gc)
     SMART_VIDEO_CACHE.clear()
+    
+    # Clear model cache WITH EXPLICIT DELETION
+    logger.info(f"Clearing {len(MODEL_CACHE)} cached models...")
+    for model_name, (net, feature_utils, seq_cfg) in list(MODEL_CACHE.items()):
+        logger.info(f"Deleting model '{model_name}' from RAM...")
+        # Explicitly delete PyTorch models to free RAM
+        del net
+        del feature_utils
+        del seq_cfg
+    
     MODEL_CACHE.clear()
     
-    # Force GPU memory cleanup
+    # Force garbage collection (multiple passes for thorough cleanup)
+    logger.info("Running garbage collection...")
+    collected_objects = 0
+    for i in range(3):
+        collected = gc.collect()
+        collected_objects += collected
+        logger.info(f"GC pass {i+1}/3: collected {collected} objects")
+    
+    # Clear GPU memory
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+        logger.info("GPU cache cleared")
+    
+    # Get memory info after cleanup
+    process = psutil.Process()
+    mem_after = process.memory_info()
+    
+    logger.info(f"✅ All caches cleared | RAM after: {mem_after.rss / 1024**3:.2f} GB")
     
     return {
         "message": "All caches cleared successfully",
-        "gpu_memory_cleared": torch.cuda.is_available()
+        "gpu_memory_cleared": torch.cuda.is_available(),
+        "gc_objects_collected": collected_objects,
+        "ram_after_gb": round(mem_after.rss / 1024**3, 2),
+        "note": "Models will need to be reloaded on next request (30-60s delay)"
     }
 
 def cleanup_file_after_delay(file_path: Path, delay_minutes: int = 5):
