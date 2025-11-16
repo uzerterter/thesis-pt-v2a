@@ -73,7 +73,6 @@ from ptsl_integration import (
     timecode_to_seconds,
     get_video_file_from_protools,
     import_audio_to_pro_tools,
-    export_timeline_selection_as_video,
 )
 
 # Legacy configuration (for backwards compatibility)
@@ -256,7 +255,7 @@ Examples:
     parser.add_argument(
         '--action',
         type=str,
-        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'export_video', 'trim_video', 'validate_duration', 'get_duration', 'import_audio', 'clip_detect_and_trim', 'get_clip_bounds'],
+        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'trim_video', 'validate_duration', 'get_duration', 'import_audio', 'clip_detect_and_trim', 'get_clip_bounds'],
         default='generate',
         help='Action to perform (default: generate)'
     )
@@ -553,29 +552,6 @@ def main():
         result = get_video_file_from_protools()
         print(json.dumps(result))
         return 0 if result['success'] else 1
-    
-    elif args.action == 'export_video':
-        """Export timeline selection as video file (handles cut/trimmed clips)"""
-        print(f"=== DEBUG: export_video action START ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        # Export timeline selection
-        result = export_timeline_selection_as_video(
-            company_name="MyCompany",
-            app_name="pt_v2a"
-        )
-        
-        print(f"=== DEBUG: Export result: {result['success']} ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        # Return result as JSON
-        print(json.dumps(result))
-        sys.stdout.flush()
-        
-        print(f"=== DEBUG: Export result sent, exiting... ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        sys.exit(0 if result['success'] else 1)
     
     elif args.action == 'trim_video':
         """Trim video segment"""

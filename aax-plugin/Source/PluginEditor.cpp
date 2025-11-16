@@ -886,21 +886,11 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         // Start async audio generation (will poll for output file)
         startAudioGeneration (videoPath, prompt.getText());
         
-        // Show info message
-        juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::InfoIcon,
-            "Audio Generation Started!",
-            "Audio generation started!\n\n"
-            "Selection: " + inTime + " - " + outTime + "\n"
-            "Duration: " + juce::String (durationSeconds, 1) + "s\n"
-            "Video: " + juce::File(videoPath).getFileName() + "\n"
-            "Prompt: " + prompt.getText() + "\n\n"
-            "The plugin will:\n"
-            "1. Generate audio via MMAudio API (~60-90s)\n"
-            "2. Automatically import to Pro Tools timeline\n\n"
-            "⏳ You'll see a notification when complete!",
-            "OK"
-        );
+        // Log generation start (no modal popup to avoid freezing)
+        juce::Logger::writeToLog ("✅ Audio generation process started");
+        juce::Logger::writeToLog ("    Selection: " + inTime + " - " + outTime);
+        juce::Logger::writeToLog ("    Duration: " + juce::String (durationSeconds, 1) + "s");
+        juce::Logger::writeToLog ("    Plugin will poll for completion and auto-import");
     }
     else
     {
