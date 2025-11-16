@@ -451,62 +451,71 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_cached_model(model_name: str = 'large_44k_v2') -> tuple[MMAudio, FeaturesUtils, ModelConfig]:
+def get_cached_model(model_name: str = 'large_44k_v2', target_dtype = None) -> tuple[MMAudio, FeaturesUtils, ModelConfig]:
     """
-    MODEL CACHE MECHANISM:
+    MODEL CACHE MECHANISM with dtype-aware caching
     
-    CACHE HIT (model already loaded):
-    - Returns cached model from VRAM/RAM instantly
+    Cache key now includes dtype to prevent mixed-precision issues.
+    This allows caching both bfloat16 and float32 versions simultaneously.
     
-    CACHE MISS (first time loading model):
+    Example cache keys:
+    - "large_44k_v2_torch.bfloat16"
+    - "large_44k_v2_torch.float32"
+    
+    CACHE HIT (model already loaded with correct dtype):
+    - Returns cached model from VRAM instantly
+    
+    CACHE MISS (first time loading model with this dtype):
     - Downloads model weights if needed (only once ever)
-    - Loads PyTorch model into VRAM
+    - Loads PyTorch model into VRAM WITH CORRECT DTYPE
     - Initializes feature extraction utilities
     - Stores in MODEL_CACHE for future requests
     
-    Memory Management:
-    - Models stay in VRAM until server restart
-    - Multiple models can be cached simultaneously
-    - No automatic eviction (assumes sufficient VRAM)
+    Memory Impact:
+    - Both precisions cached = ~2x VRAM usage (e.g., 10GB bfloat16 + 18GB float32 = 28GB total)
+    - Consider clearing cache if VRAM limited (use /cache/clear-all endpoint)
     """
-    # CACHE HIT: Return immediately from VRAM
-    if model_name in MODEL_CACHE:
-        logger.info(f"🚀 CACHE HIT: Using cached model '{model_name}' from VRAM")
-        return MODEL_CACHE[model_name]
+    if target_dtype is None:
+        target_dtype = dtype  # Default: bfloat16 (global)
     
-    # CACHE MISS: Load model from disk into VRAM
-    logger.info(f"💾 CACHE MISS: Loading model '{model_name}' into VRAM...")
+    # Create dtype-aware cache key
+    cache_key = f"{model_name}_{target_dtype}"
+    
+    # CACHE HIT: Return immediately from VRAM
+    if cache_key in MODEL_CACHE:
+        logger.info(f"🚀 CACHE HIT: Using cached model '{cache_key}' from VRAM")
+        return MODEL_CACHE[cache_key]
+    
+    # CACHE MISS: Load model from disk into VRAM WITH CORRECT DTYPE
+    logger.info(f"💾 CACHE MISS: Loading model '{model_name}' into VRAM with dtype {target_dtype}...")
     start_time = time.time()
     
-    # Validate model exists (logic from mmauudio demo.py)
+    # Validate model exists
     if model_name not in all_model_cfg:
         raise ValueError(f'Unknown model variant: {model_name}')
     
     model: ModelConfig = all_model_cfg[model_name]
-    model.download_if_needed()  # Download weights if not present (logic from mmaudio demo.py)
+    model.download_if_needed()
     seq_cfg = model.seq_cfg
 
-    # Step 1: Load main MMAudio network into VRAM  (logic from mmaudio demo.py)
-    net: MMAudio = get_my_mmaudio(model.model_name).to(device, dtype).eval()
+    # Load with TARGET DTYPE from the start (CRITICAL: weights loaded in correct precision)
+    net: MMAudio = get_my_mmaudio(model.model_name).to(device, target_dtype).eval()
     net.load_weights(torch.load(model.model_path, map_location=device, weights_only=True))
     
-    # Step 2: Load feature extraction utilities into VRAM
-    # - VAE encoder/decoder for latent space
-    # - Synchformer for video-audio synchronization
-    # - BigVGAN vocoder for final audio generation
+    # Load feature extraction utilities with target dtype
     feature_utils = FeaturesUtils(tod_vae_ckpt=model.vae_path,
                                   synchformer_ckpt=model.synchformer_ckpt,
                                   enable_conditions=True,
                                   mode=model.mode,
                                   bigvgan_vocoder_ckpt=model.bigvgan_16k_path,
                                   need_vae_encoder=False)
-    feature_utils = feature_utils.to(device, dtype).eval()
+    feature_utils = feature_utils.to(device, target_dtype).eval()
     
     load_time = time.time() - start_time
-    logger.info(f"✅ Model '{model_name}' loaded in {load_time:.2f}s and cached in VRAM")
+    logger.info(f"✅ Model '{cache_key}' loaded in {load_time:.2f}s and cached in VRAM")
     
-    # Cache complete model setup for future requests
-    MODEL_CACHE[model_name] = (net, feature_utils, seq_cfg)
+    # Cache with dtype-aware key
+    MODEL_CACHE[cache_key] = (net, feature_utils, seq_cfg)
     return net, feature_utils, seq_cfg
 
 def load_video_optimized(video_path: Path, duration_sec: float):
@@ -840,7 +849,7 @@ async def generate_audio(
                     duration_actual = float(container.duration / av.time_base) if getattr(container, 'duration', None) else 0.0
 
                 metadata_time = time.time() - metadata_start
-                logger.info(f"📊 Metadata check: {metadata_time*1000:.1f}ms | Duration: {duration_actual:.2f}s")
+                logger.info(f"📊 Metadata check: {metadata_time*1000:.1f}ms | Video duration: {duration_actual:.2f}s")
 
                 # Quick decode check (first frame) if enabled
                 if FRAME_CHECK_ENABLED:
@@ -882,17 +891,17 @@ async def generate_audio(
         if duration > 14:
             raise HTTPException(status_code=400, detail=f"Video too long: {duration:.2f}s (maximum 14s)")
 
-        # Load model (cached) and apply precision mode
-        net, feature_utils, seq_cfg = get_cached_model(model_name)
+        # Determine target dtype for this request
+        target_dtype = torch.float32 if full_precision else dtype  # dtype = bfloat16 (global)
         
-        # Convert model to float32 if full precision requested (higher quality, slower)
-        # Note: Model is cached in bfloat16, so we convert dynamically for this request
         if full_precision:
-            logger.info("Using full precision mode (float32)")
-            net = net.to(torch.float32)
-            feature_utils = feature_utils.to(torch.float32)
+            logger.info("🔬 Using full precision mode (float32) - higher quality, slower")
         else:
-            logger.info("Using default precision (bfloat16)")
+            logger.info(f"⚡ Using default precision ({dtype}) - faster, lower memory")
+        
+        # Load model with correct dtype from the start (dtype-aware caching)
+        # This ensures weights are loaded in the correct precision
+        net, feature_utils, seq_cfg = get_cached_model(model_name, target_dtype=target_dtype)
         
         # Load and process video using MMAudio's native function
         video_info = load_video_optimized(tmp_video_path, duration)
@@ -906,6 +915,13 @@ async def generate_audio(
         clip_frames = clip_frames.unsqueeze(0)
         sync_frames = sync_frames.unsqueeze(0)
         
+        # CRITICAL: Convert video tensors to target dtype
+        # Cached video_info is in bfloat16, but we need float32 for full precision
+        if clip_frames.dtype != target_dtype:
+            logger.info(f"Converting video tensors from {clip_frames.dtype} to {target_dtype}...")
+            clip_frames = clip_frames.to(target_dtype)
+            sync_frames = sync_frames.to(target_dtype)
+        
         # Update sequence configuration (from demo.py)
         seq_cfg.duration = duration
         net.update_seq_lengths(seq_cfg.latent_seq_len, seq_cfg.clip_seq_len, seq_cfg.sync_seq_len)
@@ -915,11 +931,11 @@ async def generate_audio(
         rng.manual_seed(seed)
         fm = FlowMatching(min_sigma=0, inference_mode='euler', num_steps=num_steps)
         
-        logger.info(f"Generating audio: prompt='{prompt}', duration={duration:.2f}s")
+        logger.info(f"Generating audio: prompt='{prompt}', negative_prompt='{negative_prompt}', duration={duration:.2f}s, seed={seed}")
         start_time = time.time()
 
         # Generate audio with no_grad (like demo.py)
-        # ALWAYS skip video composite - we only want audio output
+        # Note: generate() function returns audio-only by default (no video composite)
         with torch.no_grad():
             audios = generate(clip_frames,
                               sync_frames, [prompt],
@@ -928,8 +944,7 @@ async def generate_audio(
                               net=net,
                               fm=fm,
                               rng=rng,
-                              cfg_strength=cfg_strength,
-                              skip_video_composite=True)  # NEW: Always output audio-only (no video)
+                              cfg_strength=cfg_strength)
 
         generation_time = time.time() - start_time
         logger.info(f"Audio generated in {generation_time:.2f}s")

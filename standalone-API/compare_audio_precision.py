@@ -185,20 +185,42 @@ def generate_comparison_plot(audio1: Path, audio2: Path, output_path: Path):
     axes[1].set_title('Waveform Difference (bfloat16 - float32)')
     axes[1].grid(True, alpha=0.3)
     
-    # Plot 3: Spectrograms
-    from matplotlib import cm
-    spec1 = np.abs(np.fft.rfft(wave1.reshape(-1, 2048), axis=1).T)
-    spec2 = np.abs(np.fft.rfft(wave2.reshape(-1, 2048), axis=1).T)
+    # Plot 3 & 4: Spectrograms using scipy
+    # Fixed: Use proper spectrogram instead of manual FFT reshape
+    from scipy import signal
     
-    axes[2].imshow(20 * np.log10(spec1[:500, :200] + 1e-10), aspect='auto', origin='lower', cmap='viridis')
+    n_fft = 2048
+    hop_length = 512
+    
+    # Compute spectrograms using scipy's spectrogram
+    f1, t1, spec1 = signal.spectrogram(wave1, fs=sr, nperseg=n_fft, noverlap=n_fft-hop_length)
+    f2, t2, spec2 = signal.spectrogram(wave2, fs=sr, nperseg=n_fft, noverlap=n_fft-hop_length)
+    
+    # Convert to dB scale
+    spec1_db = 10 * np.log10(spec1 + 1e-10)
+    spec2_db = 10 * np.log10(spec2 + 1e-10)
+    
+    # Plot only first 5 seconds and up to 10kHz for clarity
+    time_limit = min(5.0, t1[-1])
+    freq_limit = 10000  # Hz
+    time_idx = np.where(t1 <= time_limit)[0]
+    freq_idx = np.where(f1 <= freq_limit)[0]
+    
+    im1 = axes[2].imshow(spec1_db[np.ix_(freq_idx, time_idx)], 
+                         aspect='auto', origin='lower', cmap='viridis',
+                         extent=[0, time_limit, 0, freq_limit/1000])
     axes[2].set_title('Spectrogram: bfloat16')
-    axes[2].set_ylabel('Frequency Bin')
-    axes[2].set_xlabel('Time Frame')
+    axes[2].set_ylabel('Frequency (kHz)')
+    axes[2].set_xlabel('Time (s)')
+    plt.colorbar(im1, ax=axes[2], label='Power (dB)')
     
-    axes[3].imshow(20 * np.log10(spec2[:500, :200] + 1e-10), aspect='auto', origin='lower', cmap='viridis')
+    im2 = axes[3].imshow(spec2_db[np.ix_(freq_idx, time_idx)], 
+                         aspect='auto', origin='lower', cmap='viridis',
+                         extent=[0, time_limit, 0, freq_limit/1000])
     axes[3].set_title('Spectrogram: float32')
-    axes[3].set_ylabel('Frequency Bin')
-    axes[3].set_xlabel('Time Frame')
+    axes[3].set_ylabel('Frequency (kHz)')
+    axes[3].set_xlabel('Time (s)')
+    plt.colorbar(im2, ax=axes[3], label='Power (dB)')
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
