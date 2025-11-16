@@ -89,7 +89,8 @@ def generate_audio(
     use_temp: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
     quiet: bool = False,
-    verbose: bool = False
+    verbose: bool = False,
+    full_precision: bool = False
 ) -> Optional[str]:
     """
     Generate audio from video using the MMAudio Standalone API.
@@ -152,7 +153,8 @@ def generate_audio(
         "model_name": model_name,
         "num_steps": num_steps,
         "cfg_strength": cfg_strength,
-        "output_format": output_format
+        "output_format": output_format,
+        "full_precision": full_precision
     }
     
     if duration is not None:

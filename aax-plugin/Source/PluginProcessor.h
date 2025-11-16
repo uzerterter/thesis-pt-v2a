@@ -184,6 +184,7 @@ public:
         bool autoDetectClipBounds = false,
         float clipStartSeconds = -1.0f,
         float clipEndSeconds = -1.0f,
+        bool fullPrecision = false,
         juce::String* errorMessage = nullptr
     );
     

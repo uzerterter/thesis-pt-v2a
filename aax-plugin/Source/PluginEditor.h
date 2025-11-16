@@ -159,31 +159,49 @@ private:
      *   - Leave empty if video clip starts at 00:00:00:00 (timeline beginning)
      *   - Format is flexible: "02", "00:02", "00:00:02:00" all work
      *   - Used only when trimming video with FFmpeg
-     *   - Disabled when autoDetectClipBoundsToggle is enabled
+     *   - System automatically detects trimmed clips when possible
      */
     juce::TextEditor videoOffsetInput;
     
+    //==============================================================================
+    // Advanced Generation Parameters
+    //==============================================================================
+    
     /**
-     * Toggle button for automatic clip boundary detection
+     * Negative prompt input field
+     * 
+     * Specifies audio elements to avoid during generation (e.g., "voices, music").
+     * Helps guide the model away from unwanted audio characteristics.
+     * 
+     * Default: "voices, music" (generates only sound effects)
+     */
+    juce::TextEditor negativePromptInput;
+    juce::Label negativePromptLabel { {}, "Negative Prompt:" };
+    
+    /**
+     * Random seed input field
+     * 
+     * Controls randomness in audio generation. Same seed = reproducible results.
+     * 
+     * Default: 42
+     * Format: Integer (e.g., "42", "12345")
+     */
+    juce::TextEditor seedInput;
+    juce::Label seedLabel { {}, "Seed:" };
+    
+    /**
+     * High precision mode toggle
      * 
      * When enabled:
-     *   - System reads clip boundaries directly from Pro Tools Clips List
-     *   - No manual video offset input needed
-     *   - Works best when video clip is cut/trimmed in Pro Tools
+     *   - Uses torch.float32 (higher quality, slower, more memory)
+     * When disabled:
+     *   - Uses torch.bfloat16 (default, faster, less memory)
      * 
-     * Workflow:
-     *   1. User cuts video clip in Pro Tools (using Blade tool)
-     *   2. User selects the trimmed clip
-     *   3. Enables this toggle
-     *   4. System automatically detects start/end frames from clip
-     *   5. FFmpeg trims video using detected boundaries
+     * Default: Off (bfloat16)
      * 
-     * Notes:
-     *   - When enabled, videoOffsetInput is disabled and ignored
-     *   - Requires video clip to be in Pro Tools Clips List
-     *   - Uses GetClipList PTSL command (Pro Tools 2025.06+)
+     * Note: With RTX A6000 (48GB VRAM), float32 is recommended for production use
      */
-    juce::ToggleButton autoDetectClipBoundsToggle { "Auto-detect clip boundaries from Pro Tools" };
+    juce::ToggleButton highPrecisionModeToggle { "High Precision Mode (float32)" };
     
     //==============================================================================
     // Event Handlers

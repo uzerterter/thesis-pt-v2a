@@ -223,6 +223,12 @@ Examples:
         help=f'Output audio format: "flac" (smaller) or "wav" (Pro Tools compatible, default: {DEFAULT_OUTPUT_FORMAT})'
     )
     
+    parser.add_argument(
+        '--full-precision',
+        action='store_true',
+        help='Use full precision mode (float32) instead of default bfloat16. Higher quality but slower.'
+    )
+    
     # API options
     parser.add_argument(
         '--api-url',
@@ -1230,7 +1236,8 @@ def main():
             use_temp=args.temp,
             timeout=args.timeout,
             quiet=quiet,
-            verbose=verbose
+            verbose=verbose,
+            full_precision=args.full_precision
         )
         
         if output_file:

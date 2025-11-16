@@ -44,28 +44,36 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     videoOffsetInput.setTextToShowWhenEmpty ("e.g., 00:02 (leave empty if video starts at timeline beginning)", juce::Colours::grey);
     addAndMakeVisible (videoOffsetInput);
     
-    // Configure auto-detect toggle with change handler
-    autoDetectClipBoundsToggle.onClick = [this]
-    {
-        // Disable manual offset input when auto-detect is enabled
-        bool autoDetectEnabled = autoDetectClipBoundsToggle.getToggleState();
-        videoOffsetInput.setEnabled (!autoDetectEnabled);
-        
-        if (autoDetectEnabled)
-        {
-            videoOffsetInput.setAlpha (0.5f);  // Visual feedback: greyed out
-        }
-        else
-        {
-            videoOffsetInput.setAlpha (1.0f);  // Visual feedback: normal
-        }
-    };
-    addAndMakeVisible (autoDetectClipBoundsToggle);
+    // Configure negative prompt label
+    negativePromptLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (negativePromptLabel);
+    
+    // Configure negative prompt input
+    negativePromptInput.setMultiLine (false);
+    negativePromptInput.setReturnKeyStartsNewLine (false);
+    negativePromptInput.setTextToShowWhenEmpty ("voices, music", juce::Colours::grey);
+    negativePromptInput.setText ("voices, music");  // Set default value
+    addAndMakeVisible (negativePromptInput);
+    
+    // Configure seed label
+    seedLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (seedLabel);
+    
+    // Configure seed input
+    seedInput.setMultiLine (false);
+    seedInput.setReturnKeyStartsNewLine (false);
+    seedInput.setTextToShowWhenEmpty ("42", juce::Colours::grey);
+    seedInput.setText ("42");  // Set default value
+    addAndMakeVisible (seedInput);
+    
+    // Configure high precision mode toggle
+    highPrecisionModeToggle.setToggleState (false, juce::dontSendNotification);  // Default: off (bfloat16)
+    addAndMakeVisible (highPrecisionModeToggle);
 
     // Set fixed window size (not resizable in Pro Tools)
     // Pro Tools plugins typically have fixed UI layouts
-    setResizable (false, false);
-    setSize (900, 380);  // Width x Height in pixels (increased from 350 to 380 for auto-detect toggle)
+    setResizable (true, true);
+    setSize (900, 450);  // Width x Height in pixels (reduced from 480 after removing auto-detect toggle)
 }
 
 //==============================================================================
@@ -335,14 +343,25 @@ void PtV2AEditor::resized()
     // Input field: remaining width
     videoOffsetInput.setBounds (offsetRow);
     
+    // 20px spacing before advanced parameters section
+    r.removeFromTop (20);
+    
+    // Negative prompt row: Label + Input field
+    auto negativePromptRow = r.removeFromTop (28);
+    negativePromptLabel.setBounds (negativePromptRow.removeFromLeft (120));
+    negativePromptRow.removeFromLeft (10);
+    negativePromptInput.setBounds (negativePromptRow);
+    
     // 10px spacing before next row
     r.removeFromTop (10);
     
-    // Auto-detect toggle row
-    auto autoDetectRow = r.removeFromTop (28);
-    
-    // Toggle button: full width
-    autoDetectClipBoundsToggle.setBounds (autoDetectRow);
+    // Seed and precision row: Label + Input + Toggle
+    auto seedRow = r.removeFromTop (28);
+    seedLabel.setBounds (seedRow.removeFromLeft (50));
+    seedRow.removeFromLeft (10);
+    seedInput.setBounds (seedRow.removeFromLeft (120));
+    seedRow.removeFromLeft (20);
+    highPrecisionModeToggle.setBounds (seedRow);
 }
 
 //==============================================================================
@@ -807,7 +826,6 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         // Check user preferences
         juce::String manualOffset = videoOffsetInput.getText().trim();
         bool hasManualOffset = manualOffset.isNotEmpty();
-        bool autoDetectEnabled = autoDetectClipBoundsToggle.getToggleState();
         
         // Decision logic (priority order):
         // 1. Manual offset + trimmed clip → Read clip bounds FIRST (needed for calculation), then use manual offset
@@ -846,15 +864,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         }
         else if (clipIsTrimmed)
         {
-            // Clip is trimmed and no manual offset → auto-detect clip bounds
-            if (autoDetectEnabled)
-            {
-                juce::Logger::writeToLog ("Auto-detect ENABLED - reading clip bounds from Pro Tools...");
-            }
-            else
-            {
-                juce::Logger::writeToLog ("Clip is trimmed - automatically reading clip bounds from Pro Tools...");
-            }
+            juce::Logger::writeToLog ("Clip is trimmed - automatically reading clip bounds from Pro Tools...");
+        
             
             renderButton.setButtonText ("Reading Clip Bounds...");
             
@@ -941,19 +952,32 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
         juce::Logger::writeToLog ("No trimming - using full video");
     }
     
+    // Read advanced parameters from UI
+    juce::String negativePrompt = negativePromptInput.getText().trim();
+    if (negativePrompt.isEmpty())
+        negativePrompt = "voices, music";  // Default if empty
+    
+    juce::String seedText = seedInput.getText().trim();
+    int seed = seedText.isEmpty() ? 42 : seedText.getIntValue();  // Default seed = 42
+    
+    bool useHighPrecision = highPrecisionModeToggle.getToggleState();
+    
+    juce::Logger::writeToLog ("Advanced params: negative_prompt=\"" + negativePrompt + "\", seed=" + juce::String(seed) + ", full_precision=" + (useHighPrecision ? "true" : "false"));
+    
     // Call processor to start generation (returns immediately with expected output path)
     juce::String errorMessage;
     expectedAudioOutputPath = processor.generateAudioFromVideo (
         juce::File (videoPath),
         promptText,
-        PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT,
-        PtV2AProcessor::DEFAULT_SEED,
+        negativePrompt,  // NEW: User-controlled negative prompt
+        seed,            // NEW: User-controlled seed
         videoOffset,
         timelineInSeconds,
         timelineOutSeconds,
         false,  // autoDetectClipBounds = false (legacy workflow, causes deadlock)
         clipStartSeconds,  // NEW: Pass clip bounds if available
         clipEndSeconds,    // NEW: Pass clip bounds if available
+        useHighPrecision,  // NEW: High precision mode flag
         &errorMessage
     );
     

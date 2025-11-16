@@ -306,6 +306,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     bool autoDetectClipBounds,
     float clipStartSeconds,
     float clipEndSeconds,
+    bool fullPrecision,
     juce::String* errorMessage)
 {
     juce::Logger::writeToLog ("=== MMAudio Generation Started ===");
@@ -437,6 +438,17 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     
     commandArray.add ("--output-format");
     commandArray.add ("wav");  // Pro Tools compatible
+    
+    // Add full precision flag if enabled
+    if (fullPrecision)
+    {
+        commandArray.add ("--full-precision");
+        juce::Logger::writeToLog ("Using full precision mode (float32)");
+    }
+    else
+    {
+        juce::Logger::writeToLog ("Using default precision (bfloat16)");
+    }
     
     // NOTE: No --import-to-protools flag - plugin will handle PTSL import async!
     // NOTE: Removed --quiet for debugging - we want to see Python output!
