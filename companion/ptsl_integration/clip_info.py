@@ -327,8 +327,25 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
             print("[CLIP INFO] No clip selected in Clips List", file=sys.stderr)
             return None
         
-        selected_file_id = file_locations[0].file_id
-        file_path = file_locations[0].path
+        # CRITICAL FIX: Filter for VIDEO files only (exclude audio clips)
+        # get_file_location() returns ALL selected clips, including audio
+        # We need to find the VIDEO clip, not an imported audio clip
+        video_location = None
+        for loc in file_locations:
+            # Check file extension to identify video files
+            path_lower = loc.path.lower()
+            if path_lower.endswith(('.mp4', '.mov', '.avi', '.mkv', '.m4v', '.mxf')):
+                video_location = loc
+                print(f"[CLIP INFO] Found video file: {loc.path}", file=sys.stderr)
+                break
+        
+        if not video_location:
+            print("[CLIP INFO] No VIDEO clip selected (only audio clips found)", file=sys.stderr)
+            print(f"[CLIP INFO] Selected files: {[loc.path for loc in file_locations]}", file=sys.stderr)
+            return None
+        
+        selected_file_id = video_location.file_id
+        file_path = video_location.path
         
         print(f"[CLIP INFO] Selected file: {file_path}", file=sys.stderr)
         print(f"[CLIP INFO] File ID: {selected_file_id}", file=sys.stderr)
@@ -433,8 +450,7 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
             )
             print(f"[CLIP INFO] Successfully restored to original name", file=sys.stderr)
         except Exception as e:
-            # If restore fails (e.g., name already exists from previous render with audio import),
-            # just KEEP THE TEMP NAME — we already have the clip info we need!
+            # If restore fails, keep temp name — we already have the clip info we need
             print(f"[CLIP INFO] WARNING: Could not restore to '{original_name}': {e}", file=sys.stderr)
             print(f"[CLIP INFO] Keeping temp name (clip info already extracted): {temp_name}", file=sys.stderr)
             
