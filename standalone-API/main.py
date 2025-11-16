@@ -804,7 +804,8 @@ async def generate_audio(
     model_name: str = Form("large_44k_v2"),
     num_steps: int = Form(25),
     cfg_strength: float = Form(4.5),
-    output_format: str = Form("flac")  # "flac" or "wav"
+    output_format: str = Form("flac"),  # "flac" or "wav"
+    full_precision: bool = Form(False)  # NEW: Use float32 instead of bfloat16
 ):
     """
     Generate audio from video, returns audio file in requested format.
@@ -812,6 +813,7 @@ async def generate_audio(
     Args:
         output_format: "flac" (default, lossless compression) or "wav" (uncompressed PCM)
                       Use "wav" for Pro Tools PTSL compatibility (avoids client-side conversion)
+        full_precision: Use torch.float32 (high quality, slower) instead of torch.bfloat16 (default, faster)
     """
     try:
         # Save uploaded video to temporary file
@@ -880,8 +882,17 @@ async def generate_audio(
         if duration > 14:
             raise HTTPException(status_code=400, detail=f"Video too long: {duration:.2f}s (maximum 14s)")
 
-        # Load model (cached)
+        # Load model (cached) and apply precision mode
         net, feature_utils, seq_cfg = get_cached_model(model_name)
+        
+        # Convert model to float32 if full precision requested (higher quality, slower)
+        # Note: Model is cached in bfloat16, so we convert dynamically for this request
+        if full_precision:
+            logger.info("Using full precision mode (float32)")
+            net = net.to(torch.float32)
+            feature_utils = feature_utils.to(torch.float32)
+        else:
+            logger.info("Using default precision (bfloat16)")
         
         # Load and process video using MMAudio's native function
         video_info = load_video_optimized(tmp_video_path, duration)
@@ -908,6 +919,7 @@ async def generate_audio(
         start_time = time.time()
 
         # Generate audio with no_grad (like demo.py)
+        # ALWAYS skip video composite - we only want audio output
         with torch.no_grad():
             audios = generate(clip_frames,
                               sync_frames, [prompt],
@@ -916,7 +928,8 @@ async def generate_audio(
                               net=net,
                               fm=fm,
                               rng=rng,
-                              cfg_strength=cfg_strength)
+                              cfg_strength=cfg_strength,
+                              skip_video_composite=True)  # NEW: Always output audio-only (no video)
 
         generation_time = time.time() - start_time
         logger.info(f"Audio generated in {generation_time:.2f}s")
