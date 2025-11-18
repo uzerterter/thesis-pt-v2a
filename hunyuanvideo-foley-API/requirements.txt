@@ -9,6 +9,7 @@ torchvision>=0.15.0
 torchaudio>=2.0.0
 numpy==1.26.4
 scipy
+torchcodec>=0.2.0
 
 # Deep Learning frameworks
 diffusers

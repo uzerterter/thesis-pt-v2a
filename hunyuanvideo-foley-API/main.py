@@ -33,12 +33,13 @@ import torchaudio
 
 # Add HunyuanVideo-Foley path to sys.path
 HYVF_PATH = Path("/workspace/model-tests/repos/HunyuanVideo-Foley")
+HYVF_WEIGHTS_PATH = Path("/workspace/model-tests/models/HunyuanVideo-Foley")
 sys.path.insert(0, str(HYVF_PATH))
 
 try:
     from hunyuanvideo_foley.utils.model_utils import load_model, denoise_process
     from hunyuanvideo_foley.utils.feature_utils import feature_process
-    from hunyuanvideo_foley.utils.config_utils import load_config
+    from hunyuanvideo_foley.utils.config_utils import load_yaml
 except ImportError as e:
     logging.error(f"Failed to import HunyuanVideo-Foley: {e}")
     logging.error("Please check HYVF_PATH in the script")
@@ -75,13 +76,20 @@ logging.getLogger().addHandler(buffer_handler)
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-device = 'cpu'
+# Device configuration (use torch.device object, not string)
 if torch.cuda.is_available():
-    device = 'cuda'
+    device = torch.device('cuda')
 elif torch.backends.mps.is_available():
-    device = 'mps'
+    device = torch.device('mps')
 else:
-    logger.warning('CUDA/MPS not available, running on CPU')
+    device = torch.device('cpu')
+
+# Default dtype (can be overridden with full_precision parameter)
+# HunyuanVideo-Foley uses bfloat16 by default (same as MMAudio!)
+# Note: The model is hardcoded to bfloat16 in hunyuanvideo_foley/utils/model_utils.py
+default_dtype = torch.bfloat16
+logger.info(f"🎯 Default precision: {default_dtype} (device: {device})")
+logger.warning('CUDA/MPS not available, running on CPU')
 
 # ========== CACHE SYSTEM ==========
 #
@@ -227,19 +235,20 @@ class SmartVideoCache:
         
         for key, entry in self.cache.items():
             if current_time - entry.created_at > self.ttl_seconds:
-                expired_keys.append(key)
+                expired_keys.append((key, entry.created_at))  # Store key + timestamp
         
-        for key in expired_keys:
+        for key, created_at in expired_keys:
             entry = self.cache.pop(key)
             self.stats['evictions_ttl'] += 1
             self.stats['current_size_mb'] -= entry.estimated_size_mb
             self.stats['total_entries'] -= 1
             
+            age_minutes = (current_time - created_at) / 60
+            logger.info(f"🕒 TTL EVICTED: {key[:8]}... (age: {age_minutes:.1f}min)")
+            
             # Explicitly delete tensors to free memory
             del entry.data
             del entry
-            
-            logger.info(f"🕒 TTL EVICTED: {key[:8]}... (age: {(current_time - entry.created_at)/60:.1f}min)")
     
     def _background_ttl_cleanup(self):
         """Background thread for periodic TTL cleanup (runs even when API is idle)"""
@@ -472,14 +481,18 @@ def get_cached_model(model_size: str = 'xxl'):
     if not config_path.exists():
         raise ValueError(f"Config not found: {config_path}")
     
-    cfg = load_config(str(config_path))
+    cfg = load_yaml(str(config_path))
     
-    # Load model
-    model_dict = load_model(
-        model_path=str(HYVF_PATH / "weights"),  # Adjust if weights are elsewhere
-        config=cfg,
-        device=device
+    # Load model (with correct parameter name: config_path, not config)
+    model_dict, loaded_cfg = load_model(
+        model_path=str(HYVF_WEIGHTS_PATH),
+        config_path=str(config_path),
+        device=device,
+        model_size=model_size
     )
+    
+    # Use loaded_cfg from load_model (it might differ from our parsed cfg)
+    cfg = loaded_cfg
     
     load_time = time.time() - start_time
     logger.info(f"✅ Model '{cache_key}' loaded in {load_time:.2f}s and cached in VRAM")
@@ -583,7 +596,7 @@ async def root():
     return {
         "message": "HunyuanVideo-Foley Standalone API",
         "status": "running",
-        "device": device,
+        "device": str(device),
         "version": "1.0.0"
     }
 
@@ -750,7 +763,8 @@ async def generate_audio(
     model_size: str = Form("xxl"),  # "xl" or "xxl"
     num_steps: int = Form(50),
     cfg_strength: float = Form(4.5),
-    output_format: str = Form("wav")
+    output_format: str = Form("wav"),
+    full_precision: bool = Form(False)  # Use float32 instead of float16
 ):
     """
     Generate audio from video using HunyuanVideo-Foley
@@ -764,6 +778,10 @@ async def generate_audio(
         num_steps: Number of inference steps (default: 50)
         cfg_strength: Classifier-free guidance strength (default: 4.5)
         output_format: Output format ("wav" or "flac")
+        full_precision: Use float32 for features/latents instead of bfloat16 (default: False)
+                       NOTE: Model inference is always bfloat16→float32 (hardcoded in HunyuanVideo-Foley).
+                       Effect is minimal - mainly improves numerical stability. ~10-20% more VRAM.
+                       Recommended: False (default) for most use cases.
     """
     try:
         # Save uploaded video to temporary file
@@ -833,7 +851,36 @@ async def generate_audio(
         if model_size not in ["xl", "xxl"]:
             raise HTTPException(status_code=400, detail=f"Invalid model_size: {model_size}. Must be 'xl' or 'xxl'")
         
+        # Determine target dtype for this request
+        target_dtype = torch.float32 if full_precision else default_dtype  # default_dtype = bfloat16
+        
+        # NOTE: HunyuanVideo-Foley model is hardcoded to bfloat16 in load_model()
+        # (see hunyuanvideo_foley/utils/model_utils.py line 47, 297)
+        # Additionally, the model ALWAYS converts predictions back to float32 internally
+        # (see model_utils.py line 464: noise_pred.to(dtype=torch.float32))
+        # 
+        # The full_precision parameter mainly affects:
+        # 1. Feature tensor precision (visual_feats, text_feats)
+        # 2. Latent tensor precision during preparation
+        # 
+        # Effect on quality is MINIMAL but may improve numerical stability in edge cases.
+        # This parameter exists primarily for:
+        # - API consistency with MMAudio (which has dtype-aware model caching)
+        # - Future-proofing if model code changes
+        # - Power users who want to experiment
+        #
+        # For most use cases, default bfloat16 is recommended (faster, lower VRAM).
+        
+        if full_precision:
+            logger.info("🔬 Using full precision mode (float32)")
+            logger.info("   ⚠️  Note: Model inference is always bfloat16→float32 (hardcoded)")
+            logger.info("   Effect: Higher feature precision, ~10-20% more VRAM, minimal quality gain")
+        else:
+            logger.info(f"⚡ Using default precision ({default_dtype}) - default case")
+        
         # Load model (cached in VRAM)
+        # TODO: Add dtype-aware caching like MMAudio (separate cache entries per dtype)
+        # For now, model always loads in default dtype
         model_dict, cfg = get_cached_model(model_size)
         
         # Set seed for reproducibility
@@ -856,6 +903,23 @@ async def generate_audio(
         feature_time = time.time() - start_time
         logger.info(f"⏱️  Feature processing: {feature_time:.2f}s (audio length: {audio_len_in_s:.2f}s)")
         
+        # Debug: Log feature dtypes (visual_feats and text_feats are AttributeDict objects with multiple tensors)
+        logger.info(f"🔍 Feature dtypes: siglip2={visual_feats.siglip2_feat.dtype}, "
+                   f"syncformer={visual_feats.syncformer_feat.dtype}, "
+                   f"text={text_feats.text_feat.dtype}")
+        
+        # Convert features to target dtype if needed
+        # Note: visual_feats and text_feats are AttributeDict objects, need to convert each tensor
+        if visual_feats.siglip2_feat.dtype != target_dtype:
+            logger.info(f"🔄 Converting visual features from {visual_feats.siglip2_feat.dtype} to {target_dtype}")
+            visual_feats.siglip2_feat = visual_feats.siglip2_feat.to(target_dtype)
+            visual_feats.syncformer_feat = visual_feats.syncformer_feat.to(target_dtype)
+        
+        if text_feats.text_feat.dtype != target_dtype:
+            logger.info(f"🔄 Converting text features from {text_feats.text_feat.dtype} to {target_dtype}")
+            text_feats.text_feat = text_feats.text_feat.to(target_dtype)
+            text_feats.uncond_text_feat = text_feats.uncond_text_feat.to(target_dtype)
+        
         # Generate audio
         denoise_start = time.time()
         with torch.no_grad():
@@ -873,6 +937,10 @@ async def generate_audio(
         generation_time = time.time() - start_time
         logger.info(f"⏱️  Audio denoising: {denoise_time:.2f}s")
         logger.info(f"✅ Total generation time: {generation_time:.2f}s at {sample_rate} Hz")
+        
+        # Debug: Log audio dtype
+        if isinstance(audio, torch.Tensor):
+            logger.info(f"🔍 Generated audio dtype: {audio.dtype}, shape: {audio.shape}")
         
         # Save audio
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -911,7 +979,8 @@ async def generate_audio(
                 "X-Seed": str(seed),
                 "X-Sample-Rate": str(sample_rate),
                 "X-Model-Size": model_size,
-                "X-Audio-Length": str(audio_len_in_s)
+                "X-Duration": str(audio_len_in_s),  # Consistent with MMAudio API
+                "X-Output-Format": output_format
             }
         )
         
@@ -1037,4 +1106,4 @@ if __name__ == "__main__":
     tracemalloc.start()
     logger.info("Starting HunyuanVideo-Foley Standalone API...")
     logger.info("tracemalloc enabled for memory profiling")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

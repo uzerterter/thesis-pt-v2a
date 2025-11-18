@@ -12,7 +12,7 @@ SUPPORTED_VIDEO_FORMATS = {
 }
 
 # Default generation parameters
-DEFAULT_NEGATIVE_PROMPT = "voices, music"
+DEFAULT_NEGATIVE_PROMPT = "voices, music, melody, singing, speech"
 DEFAULT_SEED = 42
 DEFAULT_NUM_STEPS = 25
 DEFAULT_CFG_STRENGTH = 4.5
