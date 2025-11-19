@@ -93,6 +93,9 @@ add_custom_command(TARGET pt_v2a_AAX PRE_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${COMPANION_DIR}/standalone_api_client.py
         ${RESOURCES_PYTHON_SCRIPTS}/standalone_api_client.py
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${COMPANION_DIR}/hunyuanvideo_foley_api_client.py
+        ${RESOURCES_PYTHON_SCRIPTS}/hunyuanvideo_foley_api_client.py
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${COMPANION_DIR}/ptsl_integration
         ${RESOURCES_PYTHON_SITEPACKAGES}/ptsl_integration

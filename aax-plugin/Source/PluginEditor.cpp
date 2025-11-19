@@ -1517,9 +1517,9 @@ void PtV2AEditor::handleModelProviderChange()
     else if (selectedId == 2)  // HunyuanVideo-Foley
     {
         // HunyuanVideo-Foley model sizes
-        modelSizeComboBox.addItem ("XL", 1);
-        modelSizeComboBox.addItem ("XXL", 2);
-        modelSizeComboBox.setSelectedId (2, juce::dontSendNotification);  // Default: XXL
+        modelSizeComboBox.addItem ("XXL", 1);
+        modelSizeComboBox.addItem ("XL", 2);
+        modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: XXL
         
         juce::Logger::writeToLog ("Model provider changed to: HunyuanVideo-Foley");
     }
