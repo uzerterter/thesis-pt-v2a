@@ -282,15 +282,17 @@ class SmartVideoCache:
         
         for key in expired_keys:
             entry = self.cache.pop(key)
+            age_minutes = (current_time - entry.created_at) / 60
             self.stats['evictions_ttl'] += 1
             self.stats['current_size_mb'] -= entry.estimated_size_mb
             self.stats['total_entries'] -= 1
             
+            # Log before deletion
+            logger.info(f"🕒 TTL EVICTED: {key[:8]}... (age: {age_minutes:.1f}min)")
+            
             # Explicitly delete tensors to free memory
             del entry.data
             del entry
-            
-            logger.info(f"🕒 TTL EVICTED: {key[:8]}... (age: {(current_time - entry.created_at)/60:.1f}min)")
     
     def _background_ttl_cleanup(self):
         """Background thread for periodic TTL cleanup (runs even when API is idle)"""

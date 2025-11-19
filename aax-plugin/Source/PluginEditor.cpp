@@ -51,8 +51,8 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     // Configure negative prompt input
     negativePromptInput.setMultiLine (false);
     negativePromptInput.setReturnKeyStartsNewLine (false);
-    negativePromptInput.setTextToShowWhenEmpty ("voices, music", juce::Colours::grey);
-    negativePromptInput.setText ("voices, music");  // Set default value
+    negativePromptInput.setTextToShowWhenEmpty ("voices, music, melody, singing, speech", juce::Colours::grey);
+    negativePromptInput.setText ("voices, music, melody, singing, speech");  // Set default value
     addAndMakeVisible (negativePromptInput);
     
     // Configure seed label
