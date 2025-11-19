@@ -11,9 +11,14 @@ Strategy:
 import sys
 import os
 import uuid
+from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Add parent directory (companion/) to Python path
+companion_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(companion_dir))
 
 from ptsl import open_engine
 from ptsl.PTSL_pb2 import ClipLocation

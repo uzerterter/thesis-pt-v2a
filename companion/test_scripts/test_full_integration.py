@@ -17,6 +17,10 @@ import sys
 import os
 from pathlib import Path
 
+# Add parent directory (companion/) to Python path
+companion_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(companion_dir))
+
 def test_full_integration():
     """Test the complete workflow with automatic clip detection"""
     

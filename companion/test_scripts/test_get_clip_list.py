@@ -6,9 +6,14 @@ py-ptsl doesn't implement get_clip_list(), but PTSL has it!
 
 import sys
 import os
+from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Add parent directory (companion/) to Python path
+companion_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(companion_dir))
 
 from ptsl import Engine
 from ptsl import PTSL_pb2 as pt
