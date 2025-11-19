@@ -31,6 +31,14 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import torchaudio
 
+# GPU monitoring (optional dependency)
+try:
+    import pynvml
+    PYNVML_AVAILABLE = True
+except ImportError:
+    PYNVML_AVAILABLE = False
+    # pynvml not installed - GPU monitoring will be limited to torch.cuda
+
 # Add HunyuanVideo-Foley path to sys.path
 HYVF_PATH = Path("/workspace/model-tests/repos/HunyuanVideo-Foley")
 HYVF_WEIGHTS_PATH = Path("/workspace/model-tests/models/HunyuanVideo-Foley")
@@ -79,17 +87,19 @@ torch.backends.cudnn.allow_tf32 = True
 # Device configuration (use torch.device object, not string)
 if torch.cuda.is_available():
     device = torch.device('cuda')
+    logger.info(f"🎯 Using CUDA device (GPU available)")
 elif torch.backends.mps.is_available():
     device = torch.device('mps')
+    logger.info(f"🎯 Using MPS device (Apple Silicon)")
 else:
     device = torch.device('cpu')
+    logger.warning('⚠️  CUDA/MPS not available, running on CPU')
 
 # Default dtype (can be overridden with full_precision parameter)
 # HunyuanVideo-Foley uses bfloat16 by default (same as MMAudio!)
 # Note: The model is hardcoded to bfloat16 in hunyuanvideo_foley/utils/model_utils.py
 default_dtype = torch.bfloat16
-logger.info(f"🎯 Default precision: {default_dtype} (device: {device})")
-logger.warning('CUDA/MPS not available, running on CPU')
+logger.info(f"🔧 Default precision: {default_dtype}")
 
 # ========== CACHE SYSTEM ==========
 #
@@ -415,6 +425,90 @@ def schedule_cleanup():
 cleanup_thread = threading.Thread(target=schedule_cleanup, daemon=True)
 cleanup_thread.start()
 
+def _get_gpu_overview():
+    """
+    Return GPU totals and per-process usage using pynvml (best-effort).
+    
+    Returns detailed GPU information including:
+    - Total/used/free memory per GPU
+    - List of processes using each GPU with PID and memory usage
+    - Process names (when available)
+    """
+    if not PYNVML_AVAILABLE:
+        return {"available": False, "note": "pynvml not installed (install: pip install nvidia-ml-py3)"}
+    
+    try:
+        pynvml.nvmlInit()
+        device_count = pynvml.nvmlDeviceGetCount()
+        gpus = []
+        
+        for i in range(device_count):
+            h = pynvml.nvmlDeviceGetHandleByIndex(i)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(h)
+            name = pynvml.nvmlDeviceGetName(h)
+            
+            total_mb = round(mem.total / 1024**2, 2)
+            used_mb = round(mem.used / 1024**2, 2)
+            free_mb = round(mem.free / 1024**2, 2)
+            
+            procs_list = []
+            # Try to get compute processes (CUDA workloads)
+            try:
+                nv_procs = pynvml.nvmlDeviceGetComputeRunningProcesses(h)
+            except Exception:
+                # Fallback to graphics processes if compute fails
+                try:
+                    nv_procs = pynvml.nvmlDeviceGetGraphicsRunningProcesses(h)
+                except Exception:
+                    nv_procs = []
+            
+            for p in nv_procs:
+                pid = getattr(p, "pid", None)
+                used_proc_mb = None
+                if hasattr(p, "usedGpuMemory"):
+                    used_proc_mb = round(p.usedGpuMemory / 1024**2, 2)
+                
+                # Try to resolve PID -> process name (may fail in containers)
+                proc_name = None
+                proc_cmdline = None
+                try:
+                    if pid is not None:
+                        proc = psutil.Process(pid)
+                        proc_name = proc.name()
+                        # Get command line to identify API processes
+                        cmdline = proc.cmdline()
+                        if len(cmdline) > 1:
+                            proc_cmdline = ' '.join(cmdline[:3])  # First 3 args
+                except Exception:
+                    pass
+                
+                procs_list.append({
+                    "pid": pid,
+                    "process_name": proc_name,
+                    "cmdline": proc_cmdline,
+                    "used_mb": used_proc_mb
+                })
+            
+            gpus.append({
+                "index": i,
+                "name": name,
+                "total_mb": total_mb,
+                "used_mb": used_mb,
+                "free_mb": free_mb,
+                "utilization_percent": round((used_mb / total_mb) * 100, 2) if total_mb > 0 else 0,
+                "processes": procs_list
+            })
+        
+        pynvml.nvmlShutdown()
+        return {"available": True, "gpus": gpus}
+        
+    except Exception as e:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+        return {"available": False, "error": str(e)}
+
 # ========== FASTAPI APPLICATION ==========
 app = FastAPI(
     title="HunyuanVideo-Foley Standalone API",
@@ -657,16 +751,17 @@ async def get_cache_stats():
     # System memory info
     memory = psutil.virtual_memory()
     
-    # GPU memory info (if available)
-    gpu_info = {}
+    # GPU memory info: Dual-view (torch process + pynvml system-wide)
+    torch_gpu = {}
     if torch.cuda.is_available():
-        gpu_info = {
-            "gpu_memory_allocated_gb": round(torch.cuda.memory_allocated() / (1024**3), 2),
-            "gpu_memory_reserved_gb": round(torch.cuda.memory_reserved() / (1024**3), 2),
-            "gpu_memory_free_gb": round((torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_reserved()) / (1024**3), 2),
-            "gpu_memory_total_gb": round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2),
-            "gpu_utilization_percent": round(torch.cuda.memory_reserved() / torch.cuda.get_device_properties(0).total_memory * 100, 2)
+        torch_gpu = {
+            "this_process_allocated_mb": round(torch.cuda.memory_allocated() / (1024**2), 2),
+            "this_process_reserved_mb": round(torch.cuda.memory_reserved() / (1024**2), 2),
+            "device_count": torch.cuda.device_count(),
+            "device_name": torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "N/A"
         }
+    
+    gpu_overview = _get_gpu_overview()
     
     return {
         "video_cache": SMART_VIDEO_CACHE.get_stats(),
@@ -680,7 +775,11 @@ async def get_cache_stats():
             "used_gb": round(memory.used / (1024**3), 2),
             "usage_percent": memory.percent
         },
-        "gpu_memory": gpu_info,
+        "gpu_memory": {
+            "torch_process_view": torch_gpu,
+            "system_view": gpu_overview,
+            "note": "torch_process_view shows this API's GPU usage. system_view shows all GPUs and all processes (including other APIs)."
+        },
         "cache_config": {
             "video_cache_max_gb": VIDEO_CACHE_MAX_GB,
             "video_cache_ttl_minutes": VIDEO_CACHE_TTL_MIN
