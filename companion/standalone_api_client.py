@@ -75,6 +75,14 @@ from ptsl_integration import (
     import_audio_to_pro_tools,
 )
 
+# Import shared CLI actions
+from cli.actions import (
+    action_check_ffmpeg,
+    action_get_video_info,
+    action_get_duration,
+    action_import_audio,
+)
+
 # Legacy configuration (for backwards compatibility)
 DEFAULT_VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\data\MMAudio_examples\noSound\sora_galloping.mp4"
 
@@ -404,7 +412,7 @@ def main():
     
     if args.action == 'check_ffmpeg':
         """Check FFmpeg availability"""
-        result = check_ffmpeg_available()
+        result = action_check_ffmpeg(log_debug_func=log_debug)
         print(json.dumps(result))
         return 0 if result['available'] else 1
     
@@ -501,56 +509,10 @@ def main():
     
     elif args.action == 'get_video_info':
         """Get timeline selection AND video file in one PTSL call (faster!)"""
-        print(f"=== DEBUG: get_video_info action START ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        # Get timeline selection
-        selection = get_video_timeline_selection()
-        
-        print(f"=== DEBUG: Timeline selection: {selection['success']} ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        if not selection['success']:
-            # Return error from timeline selection
-            print(json.dumps(selection))
-            sys.stdout.flush()
-            sys.exit(1)
-        
-        # Get video file path, passing timeline selection for validation
-        video_file = get_video_file_from_protools(
-            timeline_in_seconds=selection.get('in_seconds'),
-            timeline_out_seconds=selection.get('out_seconds')
-        )
-        
-        print(f"=== DEBUG: Video file lookup: {video_file['success']} ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        # Combine results into single response
-        combined_result = {
-            'success': selection['success'] and video_file['success'],
-            # Timeline selection fields
-            'in_time': selection.get('in_time'),
-            'out_time': selection.get('out_time'),
-            'in_seconds': selection.get('in_seconds'),
-            'out_seconds': selection.get('out_seconds'),
-            'duration_seconds': selection.get('duration_seconds'),
-            'fps': selection.get('fps'),
-            # Video file fields
-            'video_path': video_file.get('video_path'),
-            'video_files': video_file.get('video_files', []),
-            'video_count': video_file.get('video_count', 0),
-            # Error from whichever failed (if any)
-            'error': video_file.get('error') if not video_file['success'] else selection.get('error')
-        }
-        
-        print(json.dumps(combined_result))
+        result = action_get_video_info(log_debug_func=log_debug)
+        print(json.dumps(result))
         sys.stdout.flush()
-        
-        print(f"=== DEBUG: Combined result sent, exiting... ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        # Force immediate exit
-        sys.exit(0 if combined_result['success'] else 1)
+        sys.exit(0 if result['success'] else 1)
     
     elif args.action == 'get_video_file':
         """Get video file path from Pro Tools"""
@@ -601,22 +563,7 @@ def main():
     
     elif args.action == 'get_duration':
         """Get video file duration using FFprobe"""
-        print(f"=== DEBUG: get_duration action ===", file=sys.stderr)
-        print(f"Video path: {args.video}", file=sys.stderr)
-        
-        if not args.video:
-            error_response = {
-                'success': False,
-                'error': '--video argument required for get_duration action'
-            }
-            print(f"ERROR: {error_response['error']}", file=sys.stderr)
-            print(json.dumps(error_response))
-            return 1
-        
-        from video import get_video_duration
-        print(f"Calling get_video_duration()...", file=sys.stderr)
-        result = get_video_duration(args.video)
-        print(f"Result: {result}", file=sys.stderr)
+        result = action_get_duration(video_path=args.video, log_debug_func=log_debug)
         print(json.dumps(result))
         return 0 if result['success'] else 1
     
@@ -646,44 +593,14 @@ def main():
         sys.stderr.flush()
         
         # Import to Pro Tools timeline
-        try:
-            success = import_audio_to_pro_tools(
-                audio_path=args.audio_path,
-                timecode=timecode  # Pass timecode to import function
-            )
-            
-            result = {
-                'success': success,
-                'audio_path': args.audio_path
-            }
-            
-            if not success:
-                result['error'] = 'PTSL import returned False'
-            
-            print(f"=== DEBUG: Import result: {success} ===", file=sys.stderr)
-            sys.stderr.flush()
-            
-            print(json.dumps(result))
-            sys.stdout.flush()
-            sys.exit(0 if success else 1)
-            
-        except Exception as e:
-            import traceback
-            error_msg = str(e)
-            traceback_str = traceback.format_exc()
-            
-            print(f"ERROR: Import exception: {error_msg}", file=sys.stderr)
-            print(traceback_str, file=sys.stderr)
-            sys.stderr.flush()
-            
-            error_result = {
-                'success': False,
-                'error': error_msg,
-                'traceback': traceback_str
-            }
-            print(json.dumps(error_result))
-            sys.stdout.flush()
-            sys.exit(1)
+        result = action_import_audio(
+            audio_path=args.audio_path,
+            timecode=timecode,
+            log_debug_func=log_debug
+        )
+        print(json.dumps(result))
+        sys.stdout.flush()
+        sys.exit(0 if result['success'] else 1)
     
     elif args.action == 'clip_detect_and_trim':
         """Detect clip boundaries and trim video (synchronous, foreground)"""

@@ -65,6 +65,12 @@ from ptsl_integration import (
     import_audio_to_pro_tools,
 )
 
+# Import shared CLI actions
+from cli.actions import (
+    action_check_ffmpeg,
+    action_get_video_info,
+)
+
 # HunyuanVideo-Foley specific imports
 from api.hunyuanvideo_foley_client import (
     check_api_health,
@@ -403,46 +409,15 @@ def main():
     
     if args.action == 'check_ffmpeg':
         """Check FFmpeg availability"""
-        log_debug("=== DEBUG HYVF: check_ffmpeg action START ===")
-        result = check_ffmpeg_available()
-        log_debug(f"=== DEBUG HYVF: FFmpeg available: {result['available']} ===")
+        result = action_check_ffmpeg(log_debug_func=log_debug)
         print(json.dumps(result))
         return 0 if result['available'] else 1
     
     elif args.action == 'get_video_info':
         """Get timeline selection AND video file in one PTSL call"""
-        log_debug("=== DEBUG HYVF: get_video_info action START ===")
-        selection = get_video_timeline_selection()
-        log_debug(f"=== DEBUG HYVF: Timeline selection: {selection['success']} ===")
-        
-        if not selection['success']:
-            log_debug(f"=== DEBUG HYVF: Timeline selection failed: {selection.get('error')} ===")
-            print(json.dumps(selection))
-            return 1
-        
-        video_file = get_video_file_from_protools(
-            timeline_in_seconds=selection.get('in_seconds'),
-            timeline_out_seconds=selection.get('out_seconds')
-        )
-        log_debug(f"=== DEBUG HYVF: Video file lookup: {video_file['success']} ===")
-        
-        combined_result = {
-            'success': selection['success'] and video_file['success'],
-            'in_time': selection.get('in_time'),
-            'out_time': selection.get('out_time'),
-            'in_seconds': selection.get('in_seconds'),
-            'out_seconds': selection.get('out_seconds'),
-            'duration_seconds': selection.get('duration_seconds'),
-            'fps': selection.get('fps'),
-            'video_path': video_file.get('video_path'),
-            'video_files': video_file.get('video_files', []),
-            'video_count': video_file.get('video_count', 0),
-            'error': video_file.get('error') if not video_file['success'] else selection.get('error')
-        }
-        
-        log_debug(f"=== DEBUG HYVF: Combined result sent, exiting... ===")
-        print(json.dumps(combined_result))
-        return 0 if combined_result['success'] else 1
+        result = action_get_video_info(log_debug_func=log_debug)
+        print(json.dumps(result))
+        return 0 if result['success'] else 1
     
     # =============================================================================
     # Standard Generation Mode (action == 'generate')
