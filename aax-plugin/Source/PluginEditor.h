@@ -204,6 +204,32 @@ private:
     juce::ToggleButton highPrecisionModeToggle { "High Precision Mode (float32)" };
     
     //==============================================================================
+    // Model Selection
+    //==============================================================================
+    
+    /**
+     * Model provider selection dropdown
+     * Options: "MMAudio", "HunyuanVideo-Foley"
+     * 
+     * Determines which API to use:
+     *   - MMAudio: Port 8000, 16kHz/44.1kHz, general audio generation
+     *   - HunyuanVideo-Foley: Port 8001, 48kHz, professional Foley sounds
+     */
+    juce::Label modelLabel { {}, "Model:" };
+    juce::ComboBox modelProviderComboBox;
+    
+    /**
+     * Model size selection dropdown
+     * Options depend on selected provider:
+     *   - MMAudio: "Large (44.1kHz)", "Medium (44.1kHz)", "Small (16kHz)"
+     *   - HunyuanVideo-Foley: "XL (8-12GB)", "XXL (16-20GB)"
+     * 
+     * Dynamically updated when provider changes
+     */
+    juce::Label modelSizeLabel { {}, "Size:" };
+    juce::ComboBox modelSizeComboBox;
+    
+    //==============================================================================
     // Event Handlers
     //==============================================================================
     
@@ -242,6 +268,12 @@ private:
      * Shows error if log file doesn't exist
      */
     void handleOpenLogButtonClicked();
+    
+    /**
+     * Handle model provider ComboBox change
+     * Updates model size ComboBox options based on selected provider
+     */
+    void handleModelProviderChange();
     
     //==============================================================================
     // Async PTSL Communication

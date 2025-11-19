@@ -300,6 +300,8 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     const juce::String& prompt,
     const juce::String& negativePrompt,
     int seed,
+    ModelProvider modelProvider,
+    const juce::String& modelSize,
     const juce::String& videoClipOffset,
     float timelineInSeconds,
     float timelineOutSeconds,
@@ -309,7 +311,10 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     bool fullPrecision,
     juce::String* errorMessage)
 {
-    juce::Logger::writeToLog ("=== MMAudio Generation Started ===");
+    // Log provider-specific information
+    juce::String providerName = (modelProvider == ModelProvider::MMAudio) ? "MMAudio" : "HunyuanVideo-Foley";
+    juce::Logger::writeToLog ("=== " + providerName + " Generation Started ===");
+    juce::Logger::writeToLog ("Model: " + providerName + " / " + modelSize);
     juce::Logger::writeToLog ("Video: " + videoFile.getFullPathName());
     juce::Logger::writeToLog ("Prompt: " + prompt);
     juce::Logger::writeToLog ("Negative Prompt: " + negativePrompt);
@@ -328,11 +333,26 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // Get Python executable
     auto pythonExe = getPythonExecutable();
     
-    // Get API client script
-    auto scriptFile = getAPIClientScript();
+    // Get API client script based on selected provider
+    juce::File scriptFile;
+    if (modelProvider == ModelProvider::MMAudio)
+    {
+        scriptFile = getAPIClientScript();  // Uses standalone_api_client.py
+        juce::Logger::writeToLog ("Using MMAudio client script: " + scriptFile.getFullPathName());
+    }
+    else if (modelProvider == ModelProvider::HunyuanVideoFoley)
+    {
+        // Get hunyuanvideo_foley_api_client.py from companion directory
+        // First get MMAudio script to find companion directory
+        auto mmAudioScript = getAPIClientScript();
+        auto companionDir = mmAudioScript.getParentDirectory();
+        scriptFile = companionDir.getChildFile ("hunyuanvideo_foley_api_client.py");
+        juce::Logger::writeToLog ("Using HunyuanVideo-Foley client script: " + scriptFile.getFullPathName());
+    }
+    
     if (!scriptFile.existsAsFile())
     {
-        juce::String error = "API client script not found.\n\n";
+        juce::String error = "API client script not found: " + scriptFile.getFullPathName();
         
         juce::Logger::writeToLog ("ERROR: " + error);
         if (errorMessage != nullptr)
@@ -371,6 +391,42 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     
     commandArray.add ("--seed");
     commandArray.add (juce::String (seed));
+    
+    // Add model-specific arguments
+    if (modelProvider == ModelProvider::MMAudio)
+    {
+        // MMAudio uses --model <model_name>
+        // UI values: "Large (44.1kHz)" → "large_44k_v2", "Medium (44.1kHz)" → "medium_44k", "Small (16kHz)" → "small_16k"
+        juce::String modelArg;
+        if (modelSize.contains ("Large"))
+            modelArg = "large_44k_v2";
+        else if (modelSize.contains ("Medium"))
+            modelArg = "medium_44k";
+        else if (modelSize.contains ("Small"))
+            modelArg = "small_16k";
+        else
+            modelArg = "large_44k_v2";  // Default fallback
+        
+        commandArray.add ("--model");
+        commandArray.add (modelArg);
+        juce::Logger::writeToLog ("MMAudio model: " + modelArg);
+    }
+    else if (modelProvider == ModelProvider::HunyuanVideoFoley)
+    {
+        // HunyuanVideo-Foley uses --model-size <xl|xxl>
+        // UI values: "XL (8-12GB VRAM)" → "xl", "XXL (16-20GB VRAM)" → "xxl"
+        juce::String modelSizeArg;
+        if (modelSize.contains ("XL") && !modelSize.contains ("XXL"))
+            modelSizeArg = "xl";
+        else if (modelSize.contains ("XXL"))
+            modelSizeArg = "xxl";
+        else
+            modelSizeArg = "xxl";  // Default fallback
+        
+        commandArray.add ("--model-size");
+        commandArray.add (modelSizeArg);
+        juce::Logger::writeToLog ("HunyuanVideo-Foley model size: " + modelSizeArg);
+    }
     
     // WORKFLOW 1: Manual offset WITH clip bounds (trimmed clip + manual offset)
     // Priority: Manual offset > Clip bounds > Auto-detect

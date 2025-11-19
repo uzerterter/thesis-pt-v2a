@@ -69,11 +69,32 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     // Configure high precision mode toggle
     highPrecisionModeToggle.setToggleState (false, juce::dontSendNotification);  // Default: off (bfloat16)
     addAndMakeVisible (highPrecisionModeToggle);
+    
+    // Configure model selection labels
+    modelLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (modelLabel);
+    
+    modelSizeLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (modelSizeLabel);
+    
+    // Configure model provider ComboBox
+    modelProviderComboBox.addItem ("MMAudio", 1);
+    modelProviderComboBox.addItem ("HunyuanVideo-Foley", 2);
+    modelProviderComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: MMAudio
+    modelProviderComboBox.onChange = [this] { handleModelProviderChange(); };
+    addAndMakeVisible (modelProviderComboBox);
+    
+    // Configure model size ComboBox (initial values for MMAudio)
+    modelSizeComboBox.addItem ("Large (44.1kHz)", 1);
+    modelSizeComboBox.addItem ("Medium (44.1kHz)", 2);
+    modelSizeComboBox.addItem ("Small (16kHz)", 3);
+    modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
+    addAndMakeVisible (modelSizeComboBox);
 
     // Set fixed window size (not resizable in Pro Tools)
     // Pro Tools plugins typically have fixed UI layouts
     setResizable (true, true);
-    setSize (900, 450);  // Width x Height in pixels (reduced from 480 after removing auto-detect toggle)
+    setSize (900, 520);  // Width x Height in pixels (increased for model selection row)
 }
 
 //==============================================================================
@@ -184,18 +205,39 @@ void PtV2AEditor::handleRenderDummyButtonClicked()
     juce::Logger::writeToLog ("Starting audio generation with dummy video...");
     juce::Logger::writeToLog ("Prompt: " + prompt.getText());
     
+    // Read model selection from UI
+    int providerSelectedId = modelProviderComboBox.getSelectedId();
+    PtV2AProcessor::ModelProvider modelProvider = (providerSelectedId == 2) 
+        ? PtV2AProcessor::ModelProvider::HunyuanVideoFoley 
+        : PtV2AProcessor::ModelProvider::MMAudio;
+    
+    juce::String modelSize = modelSizeComboBox.getText();
+    
+    // Read advanced parameters from UI
+    juce::String negativePrompt = negativePromptInput.getText().trim();
+    if (negativePrompt.isEmpty())
+        negativePrompt = "voices, music";
+    
+    juce::String seedText = seedInput.getText().trim();
+    int seed = seedText.isEmpty() ? 42 : seedText.getIntValue();
+    
+    bool useHighPrecision = highPrecisionModeToggle.getToggleState();
+    
     juce::String generationError;
     juce::String outputPath = processor.generateAudioFromVideo (
         dummyVideo,
         prompt.getText(),
-        PtV2AProcessor::DEFAULT_NEGATIVE_PROMPT,
-        PtV2AProcessor::DEFAULT_SEED,
+        negativePrompt,
+        seed,
+        modelProvider,   // Selected model provider
+        modelSize,       // Selected model size
         "",  // No video offset for dummy video
         0.0f,  // No timeline selection for dummy video
         0.0f,  // No timeline selection for dummy video
         false,  // No auto-detect for dummy video
         -1.0f,  // No clip start
         -1.0f,  // No clip end
+        useHighPrecision,
         &generationError
     );
     
@@ -342,6 +384,19 @@ void PtV2AEditor::resized()
     
     // Input field: remaining width
     videoOffsetInput.setBounds (offsetRow);
+    
+    // 10px spacing before model selection
+    r.removeFromTop (10);
+    
+    // Model selection row: Label + Provider ComboBox + Label + Size ComboBox
+    auto modelRow = r.removeFromTop (28);
+    modelLabel.setBounds (modelRow.removeFromLeft (55));
+    modelRow.removeFromLeft (10);
+    modelProviderComboBox.setBounds (modelRow.removeFromLeft (200));
+    modelRow.removeFromLeft (20);
+    modelSizeLabel.setBounds (modelRow.removeFromLeft (40));
+    modelRow.removeFromLeft (10);
+    modelSizeComboBox.setBounds (modelRow.removeFromLeft (180));
     
     // 20px spacing before advanced parameters section
     r.removeFromTop (20);
@@ -962,6 +1017,16 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     
     bool useHighPrecision = highPrecisionModeToggle.getToggleState();
     
+    // Read model selection from UI
+    int providerSelectedId = modelProviderComboBox.getSelectedId();
+    PtV2AProcessor::ModelProvider modelProvider = (providerSelectedId == 2) 
+        ? PtV2AProcessor::ModelProvider::HunyuanVideoFoley 
+        : PtV2AProcessor::ModelProvider::MMAudio;
+    
+    juce::String modelSize = modelSizeComboBox.getText();
+    
+    juce::String providerName = (modelProvider == PtV2AProcessor::ModelProvider::MMAudio) ? "MMAudio" : "HunyuanVideo-Foley";
+    juce::Logger::writeToLog ("Model selection: " + providerName + " / " + modelSize);
     juce::Logger::writeToLog ("Advanced params: negative_prompt=\"" + negativePrompt + "\", seed=" + juce::String(seed) + ", full_precision=" + (useHighPrecision ? "true" : "false"));
     
     // Call processor to start generation (returns immediately with expected output path)
@@ -969,15 +1034,17 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     expectedAudioOutputPath = processor.generateAudioFromVideo (
         juce::File (videoPath),
         promptText,
-        negativePrompt,  // NEW: User-controlled negative prompt
-        seed,            // NEW: User-controlled seed
+        negativePrompt,  // User-controlled negative prompt
+        seed,            // User-controlled seed
+        modelProvider,   // NEW: Selected model provider (MMAudio / HunyuanVideo-Foley)
+        modelSize,       // NEW: Selected model size
         videoOffset,
         timelineInSeconds,
         timelineOutSeconds,
         false,  // autoDetectClipBounds = false (legacy workflow, causes deadlock)
-        clipStartSeconds,  // NEW: Pass clip bounds if available
-        clipEndSeconds,    // NEW: Pass clip bounds if available
-        useHighPrecision,  // NEW: High precision mode flag
+        clipStartSeconds,  // Pass clip bounds if available
+        clipEndSeconds,    // Pass clip bounds if available
+        useHighPrecision,  // High precision mode flag
         &errorMessage
     );
     
@@ -1424,4 +1491,36 @@ void PtV2AEditor::handleAudioImportResult (const juce::String& output)
     
     renderButton.setEnabled (true);
     renderButton.setButtonText ("Render Audio");
+}
+
+//==============================================================================
+// Model Selection Handler
+//==============================================================================
+void PtV2AEditor::handleModelProviderChange()
+{
+    // Get selected provider (1=MMAudio, 2=HunyuanVideo-Foley)
+    int selectedId = modelProviderComboBox.getSelectedId();
+    
+    // Clear current model size options
+    modelSizeComboBox.clear();
+    
+    if (selectedId == 1)  // MMAudio
+    {
+        // MMAudio model sizes
+        modelSizeComboBox.addItem ("Large", 1);
+        modelSizeComboBox.addItem ("Medium", 2);
+        modelSizeComboBox.addItem ("Small", 3);
+        modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
+        
+        juce::Logger::writeToLog ("Model provider changed to: MMAudio");
+    }
+    else if (selectedId == 2)  // HunyuanVideo-Foley
+    {
+        // HunyuanVideo-Foley model sizes
+        modelSizeComboBox.addItem ("XL", 1);
+        modelSizeComboBox.addItem ("XXL", 2);
+        modelSizeComboBox.setSelectedId (2, juce::dontSendNotification);  // Default: XXL
+        
+        juce::Logger::writeToLog ("Model provider changed to: HunyuanVideo-Foley");
+    }
 }

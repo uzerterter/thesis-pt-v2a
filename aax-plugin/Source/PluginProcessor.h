@@ -138,16 +138,26 @@ public:
     // MMAudio API Integration (Custom Plugin Functionality)
     //==============================================================================
     
+    /**
+     * Model provider selection
+     * Determines which API to use for audio generation
+     */
+    enum class ModelProvider
+    {
+        MMAudio,              ///< MMAudio API (port 8000, 16kHz/44.1kHz)
+        HunyuanVideoFoley    ///< HunyuanVideo-Foley API (port 8001, 48kHz professional Foley)
+    };
+    
     // Default configuration values
     static constexpr int DEFAULT_SEED = 42;                    ///< Default random seed for reproducibility
     static const juce::String DEFAULT_NEGATIVE_PROMPT;         ///< Default sounds to avoid ("voices, music")
     static const juce::String DEFAULT_API_URL;                 ///< Default MMAudio API endpoint
     
     /** 
-     * Generate audio from video file using MMAudio API
+     * Generate audio from video file using MMAudio or HunyuanVideo-Foley API
      * 
      * This method spawns a Python subprocess that:
-     * 1. Uploads video to MMAudio API (FastAPI server)
+     * 1. Uploads video to selected API (FastAPI server)
      * 2. Sends text prompt with generation parameters
      * 3. Waits for audio generation (can take 30-60 seconds)
      * 4. Downloads generated audio file (WAV format)
@@ -159,6 +169,8 @@ public:
      * @param prompt            Text prompt describing desired audio (e.g., "thunder and rain")
      * @param negativePrompt    Sounds to avoid (default: "voices, music")
      * @param seed              Random seed for reproducibility (default: 42)
+     * @param modelProvider     Which API to use (MMAudio or HunyuanVideoFoley)
+     * @param modelSize         Model size string (e.g., "large_44k_v2", "xl", "xxl")
      * @param videoClipOffset   Timeline position where video clip starts (e.g., "00:02")
      *                          Used to calculate offset into source video for trimming.
      *                          Empty string means video starts at timeline beginning (00:00:00:00)
@@ -178,6 +190,8 @@ public:
         const juce::String& prompt,
         const juce::String& negativePrompt = DEFAULT_NEGATIVE_PROMPT,
         int seed = DEFAULT_SEED,
+        ModelProvider modelProvider = ModelProvider::MMAudio,
+        const juce::String& modelSize = "large_44k_v2",
         const juce::String& videoClipOffset = "",
         float timelineInSeconds = 0.0f,
         float timelineOutSeconds = 0.0f,
