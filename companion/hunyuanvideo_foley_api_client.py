@@ -38,10 +38,12 @@ import argparse
 import json
 import sys
 import os
+import tempfile
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
-# Import from refactored modules (shared with MMAudio client)
+# Import from refactored modules
 from api import (
     SUPPORTED_VIDEO_FORMATS,
 )
@@ -370,6 +372,27 @@ def main():
     # Parse command line arguments  
     args = parse_arguments()
     
+    # DEBUG: File-based logging for background processes (stdout/stderr not captured!)
+    log_file = os.path.join(tempfile.gettempdir(), "pt_v2a_hyvf_debug.log")
+    
+    def log_debug(msg):
+        """Write to file and stderr for maximum visibility"""
+        with open(log_file, "a", encoding="utf-8") as f:
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            f.write(f"[{timestamp}] {msg}\n")
+            f.flush()
+        # Only write to stderr (not stdout) to avoid duplication in plugin output
+        print(msg, file=sys.stderr)
+        sys.stderr.flush()
+    
+    log_debug(f"=== DEBUG HYVF: Script started, sys.argv={sys.argv} ===")
+    log_debug(f"=== DEBUG HYVF: Log file: {log_file} ===")
+    log_debug(f"=== DEBUG HYVF: args.action={args.action} ===")
+    log_debug(f"=== DEBUG HYVF: args.video={args.video} ===")
+    log_debug(f"=== DEBUG HYVF: args.prompt={args.prompt} ===")
+    log_debug(f"=== DEBUG HYVF: args.model_size={args.model_size} ===")
+    log_debug(f"=== DEBUG HYVF: args.seed={args.seed} ===")
+    
     # Determine operation mode
     quiet = args.quiet
     verbose = args.verbose
@@ -380,15 +403,20 @@ def main():
     
     if args.action == 'check_ffmpeg':
         """Check FFmpeg availability"""
+        log_debug("=== DEBUG HYVF: check_ffmpeg action START ===")
         result = check_ffmpeg_available()
+        log_debug(f"=== DEBUG HYVF: FFmpeg available: {result['available']} ===")
         print(json.dumps(result))
         return 0 if result['available'] else 1
     
     elif args.action == 'get_video_info':
         """Get timeline selection AND video file in one PTSL call"""
+        log_debug("=== DEBUG HYVF: get_video_info action START ===")
         selection = get_video_timeline_selection()
+        log_debug(f"=== DEBUG HYVF: Timeline selection: {selection['success']} ===")
         
         if not selection['success']:
+            log_debug(f"=== DEBUG HYVF: Timeline selection failed: {selection.get('error')} ===")
             print(json.dumps(selection))
             return 1
         
@@ -396,6 +424,7 @@ def main():
             timeline_in_seconds=selection.get('in_seconds'),
             timeline_out_seconds=selection.get('out_seconds')
         )
+        log_debug(f"=== DEBUG HYVF: Video file lookup: {video_file['success']} ===")
         
         combined_result = {
             'success': selection['success'] and video_file['success'],
@@ -411,6 +440,7 @@ def main():
             'error': video_file.get('error') if not video_file['success'] else selection.get('error')
         }
         
+        log_debug(f"=== DEBUG HYVF: Combined result sent, exiting... ===")
         print(json.dumps(combined_result))
         return 0 if combined_result['success'] else 1
     
@@ -432,10 +462,13 @@ def main():
     try:
         # === CLI MODE ===
         if is_cli_mode:
+            log_debug("=== DEBUG HYVF: CLI mode detected ===")
             # Validate video file
             try:
                 video_path = str(validate_video_file(args.video))
+                log_debug(f"=== DEBUG HYVF: Video validated: {Path(video_path).name} ===")
             except (FileNotFoundError, ValueError) as e:
+                log_debug(f"=== DEBUG HYVF: Video validation failed: {e} ===")
                 if not quiet:
                     print(f"❌ {e}")
                 return 1
@@ -471,15 +504,18 @@ def main():
             args.output_format = 'wav'
         
         # Check API health
+        log_debug(f"=== DEBUG HYVF: Checking API at {args.api_url} ===")
         if not quiet:
             print(f"\n🔗 Checking API connection to {args.api_url}...")
         
         if not check_api_health(args.api_url, quiet=quiet):
+            log_debug(f"=== DEBUG HYVF: API health check FAILED ===")
             if not quiet:
                 print(f"❌ API not available at {args.api_url}")
                 print(f"   Make sure the HunyuanVideo-Foley API server is running on port 8001")
             return 1
         
+        log_debug(f"=== DEBUG HYVF: API health check PASSED ===")
         if not quiet:
             print("✅ API is online!")
         
@@ -495,6 +531,7 @@ def main():
         
         if args.clip_start_seconds is not None and args.clip_end_seconds is not None:
             # Clip bounds provided (auto-detected or manual)
+            log_debug(f"=== DEBUG HYVF: Trimming video from {args.clip_start_seconds}s to {args.clip_end_seconds}s ===")
             if not quiet:
                 print(f"\n✂️  Trimming video to clip bounds...")
                 print(f"   Source range: {args.clip_start_seconds}s - {args.clip_end_seconds}s")
@@ -506,11 +543,13 @@ def main():
             )
             
             if not trim_result['success']:
+                log_debug(f"=== DEBUG HYVF: Trimming FAILED: {trim_result.get('error')} ===")
                 if not quiet:
                     print(f"❌ Trimming failed: {trim_result.get('error', 'Unknown error')}")
                 return 1
             
             video_path = trim_result['output_path']
+            log_debug(f"=== DEBUG HYVF: Trimmed video saved: {Path(video_path).name} ===")
             if not quiet:
                 print(f"✅ Trimmed video: {Path(video_path).name}")
         
@@ -559,6 +598,8 @@ def main():
                     print(f"✅ Trimmed video: {Path(video_path).name}")
         
         # Generate audio
+        log_debug(f"=== DEBUG HYVF: Starting audio generation ===")
+        log_debug(f"=== DEBUG HYVF: Video: {Path(video_path).name}, Model: {model_size}, Prompt: '{prompt}' ===")
         output_file = generate_audio(
             api_url=args.api_url,
             video_path=video_path,
@@ -579,6 +620,7 @@ def main():
         )
         
         if output_file:
+            log_debug(f"=== DEBUG HYVF: Audio generation SUCCESS: {output_file} ===")
             if not quiet:
                 print(f"\n🎉 Success! Audio file generated:")
                 print(f"   {output_file}")
@@ -586,31 +628,38 @@ def main():
             
             # Import to Pro Tools if requested
             if args.import_to_protools:
+                log_debug("=== DEBUG HYVF: Starting Pro Tools import ===")
                 if not quiet:
                     print(f"\n📥 Importing audio to Pro Tools...")
                 
                 try:
                     timecode = args.video_offset if args.video_offset else None
+                    log_debug(f"=== DEBUG HYVF: Import timecode: {timecode} ===")
                     success = import_audio_to_pro_tools(
                         audio_path=output_file,
                         timecode=timecode
                     )
                     
                     if success:
+                        log_debug("=== DEBUG HYVF: Pro Tools import SUCCESS ===")
                         if not quiet:
                             print("✅ Audio imported to Pro Tools timeline!")
                     else:
+                        log_debug("=== DEBUG HYVF: Pro Tools import FAILED ===")
                         if not quiet:
                             print("❌ Failed to import audio to Pro Tools")
                         return 1
                         
                 except Exception as e:
+                    log_debug(f"=== DEBUG HYVF: Pro Tools import EXCEPTION: {e} ===")
                     if not quiet:
                         print(f"❌ Pro Tools import error: {e}")
                     return 1
             
+            log_debug("=== DEBUG HYVF: Script exiting with success ===")
             return 0
         else:
+            log_debug("=== DEBUG HYVF: Audio generation FAILED ===")
             if not quiet:
                 print("\n❌ Audio generation failed")
             return 1

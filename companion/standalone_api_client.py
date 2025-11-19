@@ -379,14 +379,13 @@ def main():
     log_file = os.path.join(tempfile.gettempdir(), "pt_v2a_debug.log")
     
     def log_debug(msg):
-        """Write to file, stdout, and stderr for maximum visibility"""
+        """Write to file and stderr for maximum visibility"""
         with open(log_file, "a", encoding="utf-8") as f:
             timestamp = __import__('datetime').datetime.now().strftime("%H:%M:%S.%f")[:-3]
             f.write(f"[{timestamp}] {msg}\n")
             f.flush()
-        print(msg)
+        # Only write to stderr (not stdout) to avoid duplication in plugin output
         print(msg, file=sys.stderr)
-        sys.stdout.flush()
         sys.stderr.flush()
     
     log_debug(f"=== DEBUG: Script started, sys.argv={sys.argv} ===")
