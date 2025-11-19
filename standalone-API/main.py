@@ -21,6 +21,19 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+# Add shared module to path
+SHARED_PATH = Path(__file__).parent.parent / "shared"
+sys.path.insert(0, str(SHARED_PATH))
+
+# Import shared configuration
+from config import (
+    API_HOST, API_PORT, LOG_LEVEL,
+    VIDEO_CACHE_MAX_GB, VIDEO_CACHE_TTL_MIN, VIDEO_FRAME_CHECK,
+    FORCE_DEVICE, FORCE_DTYPE,
+    MMAUDIO_PATH, HYVF_PATH, HYVF_WEIGHTS_PATH,
+    ALLOW_TF32, ENABLE_TRACEMALLOC, LOG_BUFFER_SIZE
+)
+
 import torch
 import numpy as np
 import av
@@ -38,7 +51,6 @@ except ImportError:
     # pynvml not installed - GPU monitoring will be limited to torch.cuda
 
 # Add MMAudio path to sys.path for imports
-MMAUDIO_PATH = Path("/workspace/model-tests/repos/MMAudio")
 sys.path.insert(0, str(MMAUDIO_PATH))
 
 try:
@@ -59,7 +71,6 @@ logger = logging.getLogger(__name__)
 
 # Ring buffer for storing recent log messages
 from collections import deque
-LOG_BUFFER_SIZE = 500  # Keep last 500 log entries
 log_buffer = deque(maxlen=LOG_BUFFER_SIZE)
 
 class BufferHandler(logging.Handler):
@@ -82,22 +93,33 @@ buffer_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
 logging.getLogger().addHandler(buffer_handler)
 
 # Global configuration
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
+torch.backends.cuda.matmul.allow_tf32 = ALLOW_TF32
+torch.backends.cudnn.allow_tf32 = ALLOW_TF32
 
-device = 'cpu'
-if torch.cuda.is_available():
-    device = 'cuda'
-    logger.info(f"🎯 Using CUDA device (GPU available)")
-elif torch.backends.mps.is_available():
-    device = 'mps'
-    logger.info(f"🎯 Using MPS device (Apple Silicon)")
+# Device selection (can be forced via FORCE_DEVICE env var)
+if FORCE_DEVICE and FORCE_DEVICE != "auto":
+    device = FORCE_DEVICE
+    logger.info(f"🎯 Using forced device: {device}")
 else:
     device = 'cpu'
-    logger.warning('⚠️  CUDA/MPS not available, running on CPU')
+    if torch.cuda.is_available():
+        device = 'cuda'
+        logger.info(f"🎯 Using CUDA device (GPU available)")
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+        logger.info(f"🎯 Using MPS device (Apple Silicon)")
+    else:
+        device = 'cpu'
+        logger.warning('⚠️  CUDA/MPS not available, running on CPU')
 
-dtype = torch.bfloat16
-logger.info(f"🔧 Default precision: {dtype}")
+# Dtype selection (can be forced via FORCE_DTYPE env var)
+if FORCE_DTYPE and FORCE_DTYPE != "auto":
+    dtype_map = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+    dtype = dtype_map.get(FORCE_DTYPE, torch.bfloat16)
+    logger.info(f"🔧 Using forced precision: {dtype}")
+else:
+    dtype = torch.bfloat16
+    logger.info(f"🔧 Default precision: {dtype}")
 
 # ========== CACHE SYSTEM ==========
 #
@@ -407,11 +429,7 @@ class SmartVideoCache:
             self._cleanup_thread.join(timeout=5)
             logger.info("🛑 TTL cleanup thread stopped")
 
-# Cache Configuration (Environment Variables supported)
-VIDEO_CACHE_MAX_GB = float(os.getenv('VIDEO_CACHE_MAX_GB', '32'))  # 32GB default max size
-VIDEO_CACHE_TTL_MIN = int(os.getenv('VIDEO_CACHE_TTL_MIN', '60'))   # 60 minutes default TTL
-
-# Initialize caches
+# Initialize caches (configuration loaded from config.py)
 MODEL_CACHE = {}    # VRAM: {model_name: (net, feature_utils, seq_cfg)}
 SMART_VIDEO_CACHE = SmartVideoCache(max_size_gb=VIDEO_CACHE_MAX_GB, ttl_minutes=VIDEO_CACHE_TTL_MIN)
 CACHE_DIR = Path("./cache")  # Disk: temporary audio files
@@ -939,7 +957,6 @@ async def generate_audio(
             tmp_video_path = Path(tmp_file.name)
         
         # Frame check: disabled by default. Set VIDEO_FRAME_CHECK=1/true/yes/on to enable quick first-frame decode.
-        FRAME_CHECK_ENABLED = os.getenv("VIDEO_FRAME_CHECK", "false").strip().lower() in ("1", "true", "yes", "on")
         
         validation_start = time.time()
         try:
@@ -959,7 +976,7 @@ async def generate_audio(
                 logger.info(f"📊 Metadata check: {metadata_time*1000:.1f}ms | Video duration: {duration_actual:.2f}s")
 
                 # Quick decode check (first frame) if enabled
-                if FRAME_CHECK_ENABLED:
+                if VIDEO_FRAME_CHECK:
                     frame_check_start = time.time()
                     frame_found = False
                     # Demux + decode until first frame or until a small number of packets checked
@@ -1199,7 +1216,11 @@ async def get_memory_profile():
 # ========== RUN APPLICATION ==========
 if __name__ == "__main__":
     # Enable memory tracking for debugging
-    tracemalloc.start()
-    logger.info("Starting MMAudio Standalone API...")
-    logger.info("tracemalloc enabled for memory profiling")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    if ENABLE_TRACEMALLOC:
+        tracemalloc.start()
+        logger.info("tracemalloc enabled for memory profiling")
+    
+    logger.info(f"Starting MMAudio Standalone API on {API_HOST}:{API_PORT}...")
+    logger.info(f"Cache: {VIDEO_CACHE_MAX_GB}GB max, {VIDEO_CACHE_TTL_MIN}min TTL")
+    logger.info(f"Device: {device}, Dtype: {dtype}")
+    uvicorn.run(app, host=API_HOST, port=API_PORT, log_level=LOG_LEVEL)
