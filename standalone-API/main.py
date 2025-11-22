@@ -59,6 +59,7 @@ try:
     from mmaudio.model.networks import MMAudio, get_my_mmaudio
     from mmaudio.model.utils.features_utils import FeaturesUtils
     import torchaudio
+    import torchaudio.transforms as T
 except ImportError as e:
     logging.error(f"Failed to import MMAudio: {e}")
     logging.error("Please check MMAUDIO_PATH in the script")
@@ -1084,10 +1085,60 @@ async def generate_audio(
         if output_format not in ["flac", "wav"]:
             raise HTTPException(status_code=400, detail=f"Invalid output_format: {output_format}. Must be 'flac' or 'wav'")
         
+        # Upsample to 48kHz if needed (Pro Tools standard sample rate)
+        target_sample_rate = 48000
+        if seq_cfg.sampling_rate != target_sample_rate:
+            logger.info(f"Upsampling audio from {seq_cfg.sampling_rate}Hz to {target_sample_rate}Hz...")
+            resample_start = time.time()
+            
+            resampler = T.Resample(
+                orig_freq=seq_cfg.sampling_rate,
+                new_freq=target_sample_rate,
+                dtype=audio.dtype
+            )
+            audio = resampler(audio)
+            
+            resample_time = time.time() - resample_start
+            logger.info(f"Resampled to {target_sample_rate}Hz in {resample_time:.2f}s")
+        else:
+            logger.info(f"Audio already at {target_sample_rate}Hz, no resampling needed")
+        
+        # Generate descriptive filename: {prompt_snippet}_{seed}_{model(size)}_{timestamp}.ext
+        # Example: footsteps_concrete_42_mmaudio(L)_20231122_142533.wav
+        # Sanitize prompt for filename (max 30 chars, alphanumeric + spaces -> underscores)
+        def sanitize_filename(text: str, max_length: int = 30) -> str:
+            """Convert text to filesystem-safe filename component"""
+            import re
+            # Take first max_length chars
+            text = text[:max_length]
+            # Replace spaces with underscores, remove non-alphanumeric (except underscores/hyphens)
+            text = re.sub(r'[^\w\s-]', '', text)
+            text = re.sub(r'[-\s]+', '_', text)
+            return text.strip('_').lower()
+        
+        def format_model_name(model_name: str) -> str:
+            """Format model name as: provider(size) - e.g., mmaudio(L), mmaudio(M), mmaudio(S)"""
+            model_lower = model_name.lower()
+            
+            if 'large' in model_lower:
+                size = 'L'
+            elif 'medium' in model_lower:
+                size = 'M'
+            elif 'small' in model_lower:
+                size = 'S'
+            else:
+                size = 'X'  # Unknown size
+            
+            # Assume MMAudio for now (can be extended for other providers)
+            return f"mmaudio({size})"
+        
+        prompt_snippet = sanitize_filename(prompt if prompt else "generated")
+        model_formatted = format_model_name(model_name)
+        
         # Save as FLAC first (like demo.py)
-        flac_filename = f"audio_{timestamp}_{seed}.flac"
+        flac_filename = f"{prompt_snippet}_{seed}_{model_formatted}_{timestamp}.flac"
         flac_path = CACHE_DIR / flac_filename
-        torchaudio.save(flac_path, audio, seq_cfg.sampling_rate)
+        torchaudio.save(flac_path, audio, target_sample_rate)
         logger.info(f"Audio file saved as {flac_path}")
         
         # Convert to WAV if requested (for Pro Tools PTSL compatibility)
@@ -1095,7 +1146,7 @@ async def generate_audio(
             logger.info("Converting FLAC to WAV for Pro Tools compatibility...")
             convert_start = time.time()
             
-            wav_filename = f"audio_{timestamp}_{seed}.wav"
+            wav_filename = f"{prompt_snippet}_{seed}_{model_formatted}_{timestamp}.wav"
             wav_path = CACHE_DIR / wav_filename
             
             # Use torchaudio for fast conversion (stays in PyTorch, no disk I/O overhead)

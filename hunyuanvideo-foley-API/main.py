@@ -1057,11 +1057,7 @@ async def generate_audio(
         if isinstance(audio, torch.Tensor):
             logger.info(f"🔍 Generated audio dtype: {audio.dtype}, shape: {audio.shape}")
         
-        # Save audio
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        audio_filename = f"audio_{timestamp}_{seed}.{output_format}"
-        audio_path = CACHE_DIR / audio_filename
-        
+        # Prepare audio tensor for saving
         # audio is shape [batch, channels, samples] - take first batch item
         if isinstance(audio, torch.Tensor):
             if audio.dim() == 3:
@@ -1070,6 +1066,32 @@ async def generate_audio(
                 audio_to_save = audio.cpu()
         else:
             audio_to_save = torch.tensor(audio[0]) if len(audio.shape) == 3 else torch.tensor(audio)
+        
+        # HunyuanVideo-Foley natively outputs 48kHz (Pro Tools standard) - no upsampling needed
+        logger.info(f"Audio sample rate: {sample_rate}Hz (native output, no resampling needed)")
+        
+        # Generate descriptive filename: {prompt_snippet}_{seed}_{model(size)}_{timestamp}.ext
+        # Example: footsteps_concrete_42_hyvfoley(XXL)_20231122_142533.wav
+        def sanitize_filename(text: str, max_length: int = 30) -> str:
+            """Convert text to filesystem-safe filename component"""
+            import re
+            text = text[:max_length]
+            text = re.sub(r'[^\w\s-]', '', text)
+            text = re.sub(r'[-\s]+', '_', text)
+            return text.strip('_').lower()
+        
+        def format_model_name(model_size: str) -> str:
+            """Format model name as: hyvfoley(size) - e.g., hyvfoley(XL), hyvfoley(XXL)"""
+            size_upper = model_size.upper()
+            return f"hyvfoley({size_upper})"
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        prompt_snippet = sanitize_filename(prompt if prompt else "generated")
+        model_formatted = format_model_name(model_size)
+        
+        # Generate filename with new format
+        audio_filename = f"{prompt_snippet}_{seed}_{model_formatted}_{timestamp}.{output_format}"
+        audio_path = CACHE_DIR / audio_filename
         
         torchaudio.save(str(audio_path), audio_to_save, sample_rate)
         logger.info(f"💾 Audio file saved: {audio_path.name} ({audio_to_save.shape})")
@@ -1086,13 +1108,13 @@ async def generate_audio(
         return FileResponse(
             audio_path,
             media_type=f"audio/{output_format}",
-            filename=audio_filename,
+            filename=audio_filename,  # Server-generated descriptive filename
             headers={
                 "X-Generation-Time": str(generation_time),
                 "X-Feature-Time": str(feature_time),
                 "X-Denoise-Time": str(denoise_time),
                 "X-Seed": str(seed),
-                "X-Sample-Rate": str(sample_rate),
+                "X-Sample-Rate": str(sample_rate),  # Now always 48000 after upsampling
                 "X-Model-Size": model_size,
                 "X-Duration": str(audio_len_in_s),  # Consistent with MMAudio API
                 "X-Output-Format": output_format
