@@ -8,9 +8,11 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
 : AudioProcessorEditor (&p), processor (p)
 {
     // Configure text input for prompt
-    prompt.setMultiLine (false);                              // Single line input
-    prompt.setReturnKeyStartsNewLine (false);                 // Enter key doesn't add newline
-    prompt.setTextToShowWhenEmpty ("Enter prompt…", juce::Colours::grey);
+    prompt.setMultiLine (true);  // Allow line breaks
+    prompt.setReturnKeyStartsNewLine (true);  // Enter = new line
+    prompt.setScrollbarsShown (true);  // Show scrollbar if needed
+    promptLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (promptLabel);
     addAndMakeVisible (prompt);
 
     // Configure render button with click handler
@@ -49,8 +51,9 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     addAndMakeVisible (negativePromptLabel);
     
     // Configure negative prompt input
-    negativePromptInput.setMultiLine (false);
-    negativePromptInput.setReturnKeyStartsNewLine (false);
+    negativePromptInput.setMultiLine (true);
+    negativePromptInput.setReturnKeyStartsNewLine (true);
+    negativePromptInput.setScrollbarsShown (true);
     negativePromptInput.setTextToShowWhenEmpty ("voices, music, melody, singing, speech", juce::Colours::grey);
     negativePromptInput.setText ("voices, music, melody, singing, speech");  // Set default value
     addAndMakeVisible (negativePromptInput);
@@ -85,15 +88,16 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     addAndMakeVisible (modelProviderComboBox);
     
     // Configure model size ComboBox (initial values for MMAudio)
-    modelSizeComboBox.addItem ("Large (44.1kHz)", 1);
-    modelSizeComboBox.addItem ("Medium (44.1kHz)", 2);
-    modelSizeComboBox.addItem ("Small (16kHz)", 3);
+    modelSizeComboBox.addItem ("Large", 1);
+    modelSizeComboBox.addItem ("Medium", 2);
+    modelSizeComboBox.addItem ("Small", 3);
     modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
     addAndMakeVisible (modelSizeComboBox);
 
     // Set fixed window size (not resizable in Pro Tools)
     // Pro Tools plugins typically have fixed UI layouts
     setResizable (true, true);
+    setResizeLimits (600, 380, 1200, 660);  // min/max width/height
     setSize (900, 520);  // Width x Height in pixels (increased for model selection row)
 }
 
@@ -334,7 +338,6 @@ void PtV2AEditor::handleOpenLogButtonClicked()
 void PtV2AEditor::paint (juce::Graphics& g)
 {
     // Fill background with dark grey
-    // Pro Tools typically uses dark UI themes, so this matches the aesthetic
     g.fillAll (juce::Colours::darkgrey);
 }
 
@@ -343,80 +346,84 @@ void PtV2AEditor::paint (juce::Graphics& g)
 //==============================================================================
 void PtV2AEditor::resized()
 {
-    // Layout components with 12px margin around edges
-    auto r = getLocalBounds().reduced (12);
+    // Layout components with 24px margin around edges
+    auto r = getLocalBounds().reduced (24);
     
     // Prompt text input: full width, 28px height, at top
-    prompt.setBounds (r.removeFromTop (28));
+    auto promptRow = r.removeFromTop (28);
+    promptLabel.setBounds (promptRow.removeFromLeft (65));
+    promptRow.removeFromLeft (10);    
+    prompt.setBounds (promptRow);
+
+    // 20px spacing between components
+    r.removeFromTop (20);
+ 
+    // Negative prompt row: Label + Input field
+    auto negativePromptRow = r.removeFromTop (28);
+    negativePromptLabel.setBounds (negativePromptRow.removeFromLeft (65));
+    negativePromptRow.removeFromLeft (10);
+    negativePromptInput.setBounds (negativePromptRow);
+
+    // 20px spacing before next row
+    r.removeFromTop (20);
     
-    // 10px spacing between components
-    r.removeFromTop (10);
+    // Seed and precision row: Label + Input + Toggle
+    auto seedRow = r.removeFromTop (28);
+    seedLabel.setBounds (seedRow.removeFromLeft (65));
+    seedRow.removeFromLeft (10);
+    seedInput.setBounds (seedRow.removeFromLeft (120));
     
-    // Button row: Render buttons and Open Log button
-    auto buttonRow = r.removeFromTop (28);
-    
-    // Render Audio button: 160px wide, left-aligned
-    renderButton.setBounds (buttonRow.removeFromLeft (160));
-    
-    // 10px spacing between buttons
-    buttonRow.removeFromLeft (10);
-    
-    // Render (dummy video) button: 200px wide, next to Render Audio
-    renderDummyButton.setBounds (buttonRow.removeFromLeft (200));
-    
-    // 10px spacing between buttons
-    buttonRow.removeFromLeft (10);
-    
-    // Open Log button: 120px wide, at the end
-    openLogButton.setBounds (buttonRow.removeFromLeft (120));
-    
-    // 10px spacing before next row
-    r.removeFromTop (10);
-    
-    // Video offset row: Label + Input field
-    auto offsetRow = r.removeFromTop (28);
-    
-    // Label: 220px wide
-    videoOffsetLabel.setBounds (offsetRow.removeFromLeft (220));
-    
-    // 10px spacing between label and input
-    offsetRow.removeFromLeft (10);
-    
-    // Input field: remaining width
-    videoOffsetInput.setBounds (offsetRow);
-    
-    // 10px spacing before model selection
-    r.removeFromTop (10);
+    // 20px spacing before model selection
+    r.removeFromTop (20);
     
     // Model selection row: Label + Provider ComboBox + Label + Size ComboBox
     auto modelRow = r.removeFromTop (28);
-    modelLabel.setBounds (modelRow.removeFromLeft (55));
+    modelLabel.setBounds (modelRow.removeFromLeft (65));
     modelRow.removeFromLeft (10);
     modelProviderComboBox.setBounds (modelRow.removeFromLeft (200));
     modelRow.removeFromLeft (20);
     modelSizeLabel.setBounds (modelRow.removeFromLeft (40));
     modelRow.removeFromLeft (10);
     modelSizeComboBox.setBounds (modelRow.removeFromLeft (180));
+    modelRow.removeFromLeft (20);
+    highPrecisionModeToggle.setBounds (modelRow);
+
+
+    // 30px spacing before next row
+    r.removeFromTop (30);
     
-    // 20px spacing before advanced parameters section
-    r.removeFromTop (20);
-    
-    // Negative prompt row: Label + Input field
-    auto negativePromptRow = r.removeFromTop (28);
-    negativePromptLabel.setBounds (negativePromptRow.removeFromLeft (120));
-    negativePromptRow.removeFromLeft (10);
-    negativePromptInput.setBounds (negativePromptRow);
-    
-    // 10px spacing before next row
-    r.removeFromTop (10);
-    
-    // Seed and precision row: Label + Input + Toggle
-    auto seedRow = r.removeFromTop (28);
-    seedLabel.setBounds (seedRow.removeFromLeft (50));
-    seedRow.removeFromLeft (10);
-    seedInput.setBounds (seedRow.removeFromLeft (120));
-    seedRow.removeFromLeft (20);
-    highPrecisionModeToggle.setBounds (seedRow);
+    // Video offset row: Label + Input field
+    auto offsetRow = r.removeFromTop (28);
+    // Label: 220px wide
+    videoOffsetLabel.setBounds (offsetRow.removeFromLeft (220));
+    // 10px spacing between label and input
+    offsetRow.removeFromLeft (10);
+    // Input field: fixed 80px width
+    videoOffsetInput.setBounds (offsetRow.removeFromLeft (80));
+
+    // 60px spacing before buttons section
+    r.removeFromTop (60);
+
+    // Button row: center the button group so left/right margins are equal
+    auto buttonRow = r.removeFromTop (28);
+
+    const int renderW   = 160;
+    const int dummyW    = 200;
+    const int openLogW  = 120;
+    const int gap1      = 20;  // between render and dummy
+    const int gap2      = 20;  // between dummy and openLog
+
+    const int totalWidth = renderW + gap1 + dummyW + gap2 + openLogW;
+    int startX = buttonRow.getX() + juce::jmax (0, (buttonRow.getWidth() - totalWidth) / 2);
+    int y = buttonRow.getY();
+    int h = buttonRow.getHeight();
+
+    renderButton.setBounds (startX, y, renderW, h);
+    startX += renderW + gap1;
+    renderDummyButton.setBounds (startX, y, dummyW, h);
+    startX += dummyW + gap2;
+    openLogButton.setBounds (startX, y, openLogW, h);
+
 }
 
 //==============================================================================
@@ -1205,7 +1212,8 @@ void PtV2AEditor::handleClipBoundsResult (const juce::String& output)
     juce::Logger::writeToLog ("Proceeding to audio generation with clip bounds");
     
     // Start audio generation (will use clipStartSeconds and clipEndSeconds)
-    startAudioGeneration (currentVideoPath, currentPrompt);
+    startAudioGeneration (currentVideoPath, currentPrompt); 
+    renderButton.setButtonText ("Generating Audio...");
 }
 
 //==============================================================================
@@ -1468,8 +1476,8 @@ void PtV2AEditor::handleAudioImportResult (const juce::String& output)
             juce::MessageBoxIconType::InfoIcon,
             "Success!",
             "Audio generated and imported to Pro Tools timeline!\n\n"
-            "✓ Generation complete\n"
-            "✓ Imported to timeline\n\n"
+            "-> Generation complete\n"
+            "-> Imported to timeline\n\n"
             "Check your Pro Tools session for the new audio track.",
             "OK"
         );

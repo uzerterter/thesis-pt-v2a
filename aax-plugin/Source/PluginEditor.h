@@ -81,12 +81,7 @@ private:
     //==============================================================================
     // GUI Components
     //==============================================================================
-    
-    /**
-     * Text input for audio generation prompt
-     * Example prompts: "thunder and rain", "footsteps on wood", "car engine starting"
-     */
-    juce::TextEditor prompt;
+
     
     /**
      * Button to trigger audio generation
@@ -116,29 +111,9 @@ private:
     juce::TextButton openLogButton { "Open Log" };
     
     /**
-     * Label for video selection dropdown
-     */
-    juce::Label videoLabel { {}, "Select Video:" };
-    
-    /**
-     * Dropdown to select which video to use for generation
-     * Populated dynamically when videos are found in Pro Tools session
-     * 
-     * Usage:
-     *   - Automatically populated when timeline selection is read
-     *   - Shows filename of each video
-     *   - User selects which video to generate audio for
-     *   - First video selected by default
-     */
-    juce::ComboBox videoComboBox;
-    
-    /** Storage for available video file paths */
-    juce::StringArray availableVideoPaths;
-    
-    /**
      * Label for video clip offset input
      */
-    juce::Label videoOffsetLabel { {}, "Video Clip Start (if processing partial clip):" };
+    juce::Label videoOffsetLabel { {}, "Video Clip Start (to be removed):" };
     
     /**
      * Text input for video clip start position on timeline
@@ -166,7 +141,15 @@ private:
     //==============================================================================
     // Advanced Generation Parameters
     //==============================================================================
-    
+        
+    /**
+     * Text input for audio generation prompt
+     * Example prompts: "thunder and rain", "footsteps on wood", "car engine starting"
+     */
+    juce::TextEditor prompt;
+    juce::Label promptLabel { {}, "Prompt:" };
+
+
     /**
      * Negative prompt input field
      * 
@@ -176,7 +159,7 @@ private:
      * Default: "voices, music" (generates only sound effects)
      */
     juce::TextEditor negativePromptInput;
-    juce::Label negativePromptLabel { {}, "Negative Prompt:" };
+    juce::Label negativePromptLabel { {}, "Negative:" };
     
     /**
      * Random seed input field

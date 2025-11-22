@@ -396,7 +396,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     if (modelProvider == ModelProvider::MMAudio)
     {
         // MMAudio uses --model <model_name>
-        // UI values: "Large (44.1kHz)" → "large_44k_v2", "Medium (44.1kHz)" → "medium_44k", "Small (16kHz)" → "small_16k"
+        // UI values: "Large" → "large_44k_v2", "Medium" → "medium_44k", "Small" → "small_16k"
         juce::String modelArg;
         if (modelSize.contains ("Large"))
             modelArg = "large_44k_v2";

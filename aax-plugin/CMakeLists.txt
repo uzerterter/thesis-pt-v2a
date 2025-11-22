@@ -105,6 +105,9 @@ add_custom_command(TARGET pt_v2a_AAX PRE_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${COMPANION_DIR}/video
         ${RESOURCES_PYTHON_SITEPACKAGES}/video
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${COMPANION_DIR}/cli
+        ${RESOURCES_PYTHON_SITEPACKAGES}/cli
     COMMENT "Syncing companion/ Python modules to Resources/ before embedding"
     VERBATIM
 )
@@ -158,6 +161,7 @@ target_link_libraries(pt_v2a PRIVATE
 #     - ptsl_integration/ → site-packages/
 #     - api/ → site-packages/
 #     - video/ → site-packages/
+#     - cli/ → site-packages/
 #
 # ALTERNATIVE (symbolic links for live editing):
 #   Windows CMD:
@@ -167,6 +171,7 @@ target_link_libraries(pt_v2a PRIVATE
 #     mklink /D ptsl_integration ..\..\..\..\companion\ptsl_integration
 #     mklink /D api ..\..\..\..\companion\api
 #     mklink /D video ..\..\..\..\companion\video
+#     mklink /D cli ..\..\..\..\companion\cli
 #
 #   Benefits: Edit companion/ files directly, changes immediately available
 #   Note: Delete symlinks before release builds to ensure self-contained plugin
