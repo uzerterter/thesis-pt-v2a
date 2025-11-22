@@ -1180,9 +1180,11 @@ async def generate_audio(
             media_type=media_type,
             filename=final_filename,
             headers={
+                "Content-Disposition": f'attachment; filename="{final_filename}"',
                 "X-Generation-Time": str(generation_time),
                 "X-Duration": str(video_info.duration_sec),
                 "X-Seed": str(seed),
+                "X-Sample-Rate": str(target_sample_rate),
                 "X-Output-Format": output_format
             }
         )

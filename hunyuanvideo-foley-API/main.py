@@ -1110,13 +1110,14 @@ async def generate_audio(
             media_type=f"audio/{output_format}",
             filename=audio_filename,  # Server-generated descriptive filename
             headers={
+                "Content-Disposition": f'attachment; filename="{audio_filename}"',
                 "X-Generation-Time": str(generation_time),
                 "X-Feature-Time": str(feature_time),
                 "X-Denoise-Time": str(denoise_time),
                 "X-Seed": str(seed),
-                "X-Sample-Rate": str(sample_rate),  # Now always 48000 after upsampling
+                "X-Sample-Rate": str(sample_rate),
                 "X-Model-Size": model_size,
-                "X-Duration": str(audio_len_in_s),  # Consistent with MMAudio API
+                "X-Duration": str(audio_len_in_s),
                 "X-Output-Format": output_format
             }
         )
