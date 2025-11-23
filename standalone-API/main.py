@@ -1143,16 +1143,26 @@ async def generate_audio(
         
         # Convert to WAV if requested (for Pro Tools PTSL compatibility)
         if output_format == "wav":
-            logger.info("Converting FLAC to WAV for Pro Tools compatibility...")
+            logger.info("Converting FLAC to WAV (24-bit PCM) for Pro Tools compatibility...")
             convert_start = time.time()
             
             wav_filename = f"{prompt_snippet}_{seed}_{model_formatted}_{timestamp}.wav"
             wav_path = CACHE_DIR / wav_filename
             
-            # Use torchaudio for fast conversion (stays in PyTorch, no disk I/O overhead)
-            # Load FLAC and save as WAV (24-bit PCM for Pro Tools professional quality)
-            waveform, sample_rate = torchaudio.load(flac_path)
-            torchaudio.save(wav_path, waveform, sample_rate, encoding="PCM_S", bits_per_sample=24)
+            # Use soundfile for reliable 24-bit PCM (torchaudio has encoding parameter issues)
+            try:
+                import soundfile as sf
+                waveform, sample_rate = torchaudio.load(flac_path)
+                # Convert to numpy for soundfile (transpose for correct shape)
+                audio_np = waveform.cpu().numpy().T  # Shape: (samples, channels)
+                sf.write(str(wav_path), audio_np, sample_rate, subtype='PCM_24')
+                logger.info(f"✅ WAV saved: 24-bit PCM, {sample_rate}Hz, {waveform.shape[0]}ch")
+            except ImportError:
+                # Fallback to torchaudio (may produce 16-bit on some systems)
+                logger.warning("soundfile not available, using torchaudio (may not be 24-bit)")
+                waveform, sample_rate = torchaudio.load(flac_path)
+                torchaudio.save(wav_path, waveform, sample_rate)
+                logger.info(f"⚠️  WAV saved with torchaudio (bit depth may vary)")
             
             convert_time = time.time() - convert_start
             logger.info(f"Converted to WAV in {convert_time:.2f}s")

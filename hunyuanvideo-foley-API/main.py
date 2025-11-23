@@ -1093,8 +1093,23 @@ async def generate_audio(
         audio_filename = f"{prompt_snippet}_{seed}_{model_formatted}_{timestamp}.{output_format}"
         audio_path = CACHE_DIR / audio_filename
         
-        torchaudio.save(str(audio_path), audio_to_save, sample_rate)
-        logger.info(f"💾 Audio file saved: {audio_path.name} ({audio_to_save.shape})")
+        # Save with explicit 24-bit PCM for WAV format (professional quality)
+        if output_format.lower() == "wav":
+            try:
+                import soundfile as sf
+                # Convert to numpy for soundfile (transpose for correct shape)
+                audio_np = audio_to_save.cpu().numpy().T  # Shape: (samples, channels)
+                sf.write(str(audio_path), audio_np, sample_rate, subtype='PCM_24')
+                logger.info(f"💾 Audio file saved: {audio_path.name} ({audio_to_save.shape}) - 24-bit PCM")
+            except ImportError:
+                # Fallback to torchaudio (may produce 16-bit on some systems)
+                logger.warning("soundfile not available, using torchaudio (may not be 24-bit)")
+                torchaudio.save(str(audio_path), audio_to_save, sample_rate)
+                logger.info(f"💾 Audio file saved: {audio_path.name} ({audio_to_save.shape}) - bit depth may vary")
+        else:
+            # FLAC or other formats (FLAC preserves float32 precision)
+            torchaudio.save(str(audio_path), audio_to_save, sample_rate)
+            logger.info(f"💾 Audio file saved: {audio_path.name} ({audio_to_save.shape})")
         
         # Schedule cleanup (delete after 5 minutes)
         cleanup_file_after_delay(audio_path, delay_minutes=5)
