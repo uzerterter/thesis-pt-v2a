@@ -183,6 +183,17 @@ def generate_audio(
         output_format_used = response.headers.get('X-Output-Format', output_format)
         sample_rate = response.headers.get('X-Sample-Rate', '48000')
         
+        # Extract server-generated filename from Content-Disposition header
+        # FastAPI FileResponse includes: Content-Disposition: attachment; filename="..."
+        server_filename = None
+        content_disposition = response.headers.get('Content-Disposition', '')
+        if 'filename=' in content_disposition:
+            # Parse filename from Content-Disposition header
+            import re
+            match = re.search(r'filename="?([^"]+)"?', content_disposition)
+            if match:
+                server_filename = match.group(1)
+        
         if not quiet:
             print(f"\n✅ Audio generated successfully!")
             print(f"   Total time: {total_time:.2f}s")
@@ -191,6 +202,8 @@ def generate_audio(
             print(f"   Seed used: {used_seed}")
             print(f"   Format: {output_format_used}")
             print(f"   Sample Rate: {sample_rate} Hz (professional Foley standard)")
+            if server_filename:
+                print(f"   Filename: {server_filename}")
         
         # Determine output path
         if output_path:
@@ -206,9 +219,14 @@ def generate_audio(
                 output_dir = Path("./hunyuanvideo-foley-outputs")
                 output_dir.mkdir(exist_ok=True)
             
-            timestamp = int(time.time())
-            file_ext = output_format.lower()
-            output_filename = f"hyvf_{model_size}_{timestamp}_{seed}.{file_ext}"
+            # Use server-generated filename if available, otherwise fallback to old format
+            if server_filename:
+                output_filename = server_filename
+            else:
+                timestamp = int(time.time())
+                file_ext = output_format.lower()
+                output_filename = f"hyvf_{model_size}_{timestamp}_{seed}.{file_ext}"
+            
             final_output_path = output_dir / output_filename
 
         # Save audio file

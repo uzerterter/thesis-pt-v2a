@@ -479,21 +479,23 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
         juce::Logger::writeToLog ("⚠️ WARNING: Auto-detect clip boundaries in background (may cause deadlock from plugin!)");
     }
     
-    // Generate predictable output path in temp directory
+    // Generate output directory path (filename will be generated server-side with prompt snippet)
     auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
     auto outputsDir = tempDir.getChildFile ("pt_v2a_outputs");
     outputsDir.createDirectory();
     
-    // Use timestamp + seed for unique filename (same as Python generates)
-    auto timestamp = juce::String (juce::Time::getCurrentTime().toMilliseconds());
-    auto outputFilename = "audio_" + timestamp + "_" + juce::String (seed) + ".wav";
-    auto outputFile = outputsDir.getChildFile (outputFilename);
+    // NOTE: We no longer generate a specific filename here
+    // The server will generate a descriptive name: {prompt_snippet}_{seed}_{model}_{timestamp}.wav
+    // Python client will save using the server-provided filename
+    // We just specify the output directory via --temp flag (client will use temp dir)
     
-    commandArray.add ("--output");
-    commandArray.add (outputFile.getFullPathName());
+    // Don't pass --output (client will auto-generate path in temp dir with server name)
+    // The client will print the actual output path to stdout, which we'll read
     
     commandArray.add ("--output-format");
     commandArray.add ("wav");  // Pro Tools compatible
+    
+    commandArray.add ("--temp");  // Use temp directory (pt_v2a_outputs)
     
     // Add full precision flag if enabled
     if (fullPrecision)
@@ -512,7 +514,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     
     juce::Logger::writeToLog ("Starting audio generation (background process)...");
     juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
-    juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
+    juce::Logger::writeToLog ("Server will generate filename with prompt snippet");
     juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
     
     // Execute subprocess in BACKGROUND (non-blocking)
@@ -542,15 +544,17 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // The OS will clean up the process when it finishes
     // Memory leak is acceptable here (one-time allocation per generation)
     
-    juce::Logger::writeToLog ("Expected output file: " + outputFile.getFullPathName());
-    juce::Logger::writeToLog ("Editor will poll for file completion...");
+    // NOTE: Server generates filename with prompt snippet, so we can't predict the exact name
+    // Instead, we return the output directory path
+    // The Editor will poll for the NEWEST .wav file in this directory
+    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
+    juce::Logger::writeToLog ("Editor will poll for newest WAV file in directory...");
     
     if (errorMessage != nullptr)
         *errorMessage = "";  // Clear any previous error
     
-    // Return the expected output path
-    // Editor will poll for this specific file
-    return outputFile.getFullPathName();
+    // Return the output directory path (Editor will find the newest file there)
+    return outputsDir.getFullPathName();
 }
 
 //==============================================================================

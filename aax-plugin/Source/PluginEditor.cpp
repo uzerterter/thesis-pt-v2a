@@ -1343,32 +1343,76 @@ void PtV2AEditor::checkAudioGenerationComplete()
         return;
     }
     
-    // Check if output file exists
-    juce::File outputFile (expectedAudioOutputPath);
-    if (!outputFile.existsAsFile())
+    // expectedAudioOutputPath now contains the OUTPUT DIRECTORY (not specific file)
+    // Find the newest .wav file in that directory
+    juce::File outputDir (expectedAudioOutputPath);
+    
+    if (!outputDir.isDirectory())
+    {
+        // Fallback: treat as file path (backwards compatibility)
+        juce::File outputFile (expectedAudioOutputPath);
+        if (!outputFile.existsAsFile())
+        {
+            // Still generating, keep waiting
+            int64_t elapsedMs = elapsed.inMilliseconds();
+            if (elapsedMs > 0 && (elapsedMs / 1000) % 10 == 0 && (elapsedMs % 1000) < TIMER_INTERVAL_MS)
+            {
+                juce::Logger::writeToLog ("Still generating... (" + 
+                                          juce::String (elapsedMs / 1000) + "s elapsed)");
+            }
+            return;
+        }
+        
+        // File found! (backwards compatibility path)
+        juce::Logger::writeToLog ("✓ Audio generation complete after " + 
+                                  juce::String (elapsed.inSeconds()) + "s");
+        juce::Logger::writeToLog ("Output file: " + expectedAudioOutputPath);
+        
+        stopTimer();
+        renderButton.setButtonText ("Importing Audio...");
+        startAudioImport (expectedAudioOutputPath);
+        return;
+    }
+    
+    // Find newest .wav file in directory (server-generated filename with prompt snippet)
+    juce::File newestWavFile;
+    juce::Time newestTime;
+    
+    for (auto& entry : juce::RangedDirectoryIterator (outputDir, false, "*.wav"))
+    {
+        auto file = entry.getFile();
+        auto modTime = file.getLastModificationTime();
+        
+        if (newestWavFile == juce::File() || modTime > newestTime)
+        {
+            newestWavFile = file;
+            newestTime = modTime;
+        }
+    }
+    
+    // Check if a wav file was created after we started generation
+    if (newestWavFile != juce::File() && newestTime >= asyncOperationStartTime)
+    {
+        // Found the generated audio file!
+        juce::Logger::writeToLog ("✓ Audio generation complete after " + 
+                                  juce::String (elapsed.inSeconds()) + "s");
+        juce::Logger::writeToLog ("Output file: " + newestWavFile.getFullPathName());
+        juce::Logger::writeToLog ("Filename: " + newestWavFile.getFileName());
+        
+        stopTimer();
+        renderButton.setButtonText ("Importing Audio...");
+        startAudioImport (newestWavFile.getFullPathName());
+    }
+    else
     {
         // Still generating, keep waiting
-        // Log every 10 seconds
         int64_t elapsedMs = elapsed.inMilliseconds();
         if (elapsedMs > 0 && (elapsedMs / 1000) % 10 == 0 && (elapsedMs % 1000) < TIMER_INTERVAL_MS)
         {
             juce::Logger::writeToLog ("Still generating... (" + 
                                       juce::String (elapsedMs / 1000) + "s elapsed)");
         }
-        return;
     }
-    
-    // Output file exists! Generation complete
-    juce::Logger::writeToLog ("✓ Audio generation complete after " + 
-                              juce::String (elapsed.inSeconds()) + "s");
-    juce::Logger::writeToLog ("Output file: " + expectedAudioOutputPath);
-    
-    // Stop timer (will restart for import)
-    stopTimer();
-    
-    // Now start async PTSL import
-    renderButton.setButtonText ("Importing Audio...");
-    startAudioImport (expectedAudioOutputPath);
 }
 
 void PtV2AEditor::startAudioImport (const juce::String& audioPath)

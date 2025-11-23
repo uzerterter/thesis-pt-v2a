@@ -185,6 +185,17 @@ def generate_audio(
         used_seed = response.headers.get('X-Seed', seed)
         output_format_used = response.headers.get('X-Output-Format', output_format)
         
+        # Extract server-generated filename from Content-Disposition header
+        # FastAPI FileResponse includes: Content-Disposition: attachment; filename="..."
+        server_filename = None
+        content_disposition = response.headers.get('Content-Disposition', '')
+        if 'filename=' in content_disposition:
+            # Parse filename from Content-Disposition header
+            import re
+            match = re.search(r'filename="?([^"]+)"?', content_disposition)
+            if match:
+                server_filename = match.group(1)
+        
         if not quiet:
             print(f"\n✅ Audio generated successfully!")
             print(f"   Total time: {total_time:.2f}s")
@@ -192,6 +203,8 @@ def generate_audio(
             print(f"   Video duration: {actual_duration}s")
             print(f"   Seed used: {used_seed}")
             print(f"   Format: {output_format_used}")
+            if server_filename:
+                print(f"   Filename: {server_filename}")
         
         # Determine output path
         if output_path:
@@ -199,7 +212,7 @@ def generate_audio(
             # Ensure output directory exists
             final_output_path.parent.mkdir(parents=True, exist_ok=True)
         else:
-            # Auto-generate output filename with correct extension
+            # Auto-generate output path, using server-provided filename if available
             if use_temp:
                 output_dir = Path(tempfile.gettempdir()) / "pt_v2a_outputs"
                 output_dir.mkdir(exist_ok=True, parents=True)
@@ -207,9 +220,14 @@ def generate_audio(
                 output_dir = Path("./standalone-API_outputs")
                 output_dir.mkdir(exist_ok=True)
             
-            timestamp = int(time.time())
-            file_ext = output_format.lower()
-            output_filename = f"generated_audio_{timestamp}_{seed}.{file_ext}"
+            # Use server-generated filename if available, otherwise fallback to timestamp-based
+            if server_filename:
+                output_filename = server_filename
+            else:
+                timestamp = int(time.time())
+                file_ext = output_format.lower()
+                output_filename = f"generated_audio_{timestamp}_{seed}.{file_ext}"
+            
             final_output_path = output_dir / output_filename
 
         # Save audio file

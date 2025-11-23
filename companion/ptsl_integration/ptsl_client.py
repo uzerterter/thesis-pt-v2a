@@ -32,7 +32,7 @@ except ImportError:
 try:
     from ptsl import open_engine
     import ptsl.PTSL_pb2 as pt
-    from ptsl.ops import Import
+    from ptsl.ops import Import, RenameSelectedClip
     PTSL_AVAILABLE = True
 except ImportError:
     PTSL_AVAILABLE = False
@@ -214,6 +214,11 @@ def import_audio_to_pro_tools(
             engine.client.run(import_op)
             import_time = time.time() - import_start
             print(f"  PTSL import operation: {import_time:.2f}s")
+            
+            # Note: Clip renaming disabled to avoid renaming other selected clips
+            # Pro Tools will use the full file path as clip name
+            # The server-generated filename is descriptive enough when viewed
+            # TODO: Find a way to rename only the newly imported clip without affecting others
             
             total_ptsl = time.time() - ptsl_start
             print(f"  Total PTSL time: {total_ptsl:.2f}s")
