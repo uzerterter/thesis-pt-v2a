@@ -52,21 +52,23 @@ from api import (
     get_available_models,
     DEFAULT_API_URL,
     SUPPORTED_VIDEO_FORMATS,
-)
-from api.config import (
     DEFAULT_NEGATIVE_PROMPT,
     DEFAULT_SEED,
-    DEFAULT_NUM_STEPS,
-    DEFAULT_CFG_STRENGTH,
-    DEFAULT_MODEL,
+    MMAUDIO_DEFAULT_NUM_STEPS,
+    MMAUDIO_DEFAULT_CFG_STRENGTH,
+    MMAUDIO_DEFAULT_MODEL,
     DEFAULT_OUTPUT_FORMAT,
     DEFAULT_TIMEOUT,
+    VIDEO_DOWNSCALE_THRESHOLD_MB,
 )
 from video import (
     check_ffmpeg_available,
     trim_video_segment,
+    trim_and_maybe_downscale_video,
     validate_video_duration,
     validate_video_file,
+    get_video_bitrate,
+    downscale_video,
 )
 from ptsl_integration import (
     get_video_timeline_selection,
@@ -205,22 +207,22 @@ Examples:
     parser.add_argument(
         '--model',
         type=str,
-        default=DEFAULT_MODEL,
-        help=f'Model variant to use (default: {DEFAULT_MODEL})'
+        default=MMAUDIO_DEFAULT_MODEL,
+        help=f'Model variant to use (default: {MMAUDIO_DEFAULT_MODEL})'
     )
     
     parser.add_argument(
         '--steps',
         type=int,
-        default=DEFAULT_NUM_STEPS,
-        help=f'Number of generation steps (default: {DEFAULT_NUM_STEPS})'
+        default=MMAUDIO_DEFAULT_NUM_STEPS,
+        help=f'Number of generation steps (default: {MMAUDIO_DEFAULT_NUM_STEPS})'
     )
     
     parser.add_argument(
         '--cfg-strength',
         type=float,
-        default=DEFAULT_CFG_STRENGTH,
-        help=f'CFG strength for prompt guidance (default: {DEFAULT_CFG_STRENGTH})'
+        default=MMAUDIO_DEFAULT_CFG_STRENGTH,
+        help=f'CFG strength for prompt guidance (default: {MMAUDIO_DEFAULT_CFG_STRENGTH})'
     )
     
     parser.add_argument(
@@ -737,6 +739,7 @@ def main():
             try:
                 video_path_obj = validate_video_file(args.video)
                 video_path = str(video_path_obj)
+                
             except (FileNotFoundError, ValueError) as e:
                 error_msg = f"Video validation failed: {e}"
                 if not quiet:
@@ -800,6 +803,39 @@ def main():
                 else:
                     print("📦 No models loaded yet (will load on first request)")
         
+        # === Video Preprocessing (Downscaling) ===
+        # Check if video needs downscaling BEFORE workflow processing
+        # This handles untrimmed videos (trimmed videos are checked after trimming)
+        will_be_trimmed = (
+            (args.video_offset and args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
+            (args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
+            args.auto_detect_clip_bounds or
+            (args.video_offset and args.timeline_start != 0.0 and args.timeline_end != 0.0)
+        )
+        
+        if not will_be_trimmed:
+            # Video won't be trimmed, check if downscaling needed now
+            file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
+            log_debug(f"=== DEBUG: Untrimmed video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+            
+            if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
+                log_debug(f"=== DEBUG: File size exceeds threshold, downscaling to 480p... ===")
+                downscale_result = downscale_video(video_path)
+                if downscale_result['success']:
+                    log_debug(f"=== DEBUG: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
+                    log_debug(f"=== DEBUG: FPS preserved: {downscale_result['original_fps']:.1f} fps ===")
+                    video_path = downscale_result['output_path']
+                    if not quiet:
+                        print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
+                else:
+                    log_debug(f"=== DEBUG: Downscaling failed: {downscale_result['error']} ===")
+                    if not quiet:
+                        print(f"⚠️ Downscaling failed, using original video")
+            else:
+                log_debug(f"=== DEBUG: File size OK, no downscaling needed ===")
+        else:
+            log_debug(f"=== DEBUG: Video will be trimmed, downscaling will occur after trimming ===")
+        
         # === Video Trimming (Four workflows supported) ===
         # 1. MANUAL OFFSET + CLIP BOUNDS (trimmed clip + manual offset): Both --video-offset AND --clip-start-seconds provided
         # 2. CLIP BOUNDS ONLY (auto-detect): --clip-start-seconds and --clip-end-seconds provided
@@ -862,8 +898,8 @@ def main():
                 print(f"   Clip timeline position: {video_clip_timeline_start}s")
                 print(f"   Trimming source: {start_in_source:.3f}s - {end_in_source:.3f}s")
             
-            # Trim video
-            trim_result = trim_video_segment(
+            # Trim video (with automatic downscaling if needed)
+            trim_result = trim_and_maybe_downscale_video(
                 video_path=video_path,
                 start_seconds=start_in_source,
                 end_seconds=end_in_source
@@ -876,8 +912,18 @@ def main():
                     print(f"❌ {error_msg}")
                 return 1
             
-            video_path = trim_result['trimmed_video_path']
+            video_path = trim_result['output_path']
             log_debug(f"=== DEBUG: Trimmed video saved to: {video_path} ===")
+            log_debug(f"=== DEBUG: Original size: {trim_result['original_size_mb']:.1f} MB, Final size: {trim_result['final_size_mb']:.1f} MB ===")
+            log_debug(f"=== DEBUG: Downscaled: {trim_result['downscaled']}, Encoding time: {trim_result['encoding_time']:.1f}s ===")
+            
+            if trim_result['downscaled']:
+                if not quiet:
+                    print(f"⚡ Video trimmed and downscaled to 480p in {trim_result['encoding_time']:.1f}s")
+            else:
+                if not quiet:
+                    print(f"✂️  Video trimmed in {trim_result['encoding_time']:.1f}s")
+            
             log_debug(f"=== DEBUG: Will use trimmed video: {video_path} ===")
         
         # Workflow 2: Clip bounds provided by C++ plugin (async, safe, no deadlock!)
@@ -889,8 +935,8 @@ def main():
                 print(f"\n✂️  Trimming video to clip boundaries...")
                 print(f"   {args.clip_start_seconds:.3f}s - {args.clip_end_seconds:.3f}s")
             
-            # Trim video using provided boundaries
-            trim_result = trim_video_segment(
+            # Trim video using provided boundaries (with automatic downscaling if needed)
+            trim_result = trim_and_maybe_downscale_video(
                 video_path=video_path,
                 start_seconds=args.clip_start_seconds,
                 end_seconds=args.clip_end_seconds
@@ -904,16 +950,20 @@ def main():
                 return 1
             
             # Use trimmed video for generation
-            trimmed_video_path = trim_result['output_path']
-            log_debug(f"=== DEBUG: Trimmed video saved to: {trimmed_video_path} ===")
+            video_path = trim_result['output_path']
+            log_debug(f"=== DEBUG: Trimmed video saved to: {video_path} ===")
+            log_debug(f"=== DEBUG: Original size: {trim_result['original_size_mb']:.1f} MB, Estimated: {trim_result['estimated_size_mb']:.1f} MB, Final: {trim_result['final_size_mb']:.1f} MB ===")
+            log_debug(f"=== DEBUG: Downscaled: {trim_result['downscaled']}, Encoding time: {trim_result['encoding_time']:.1f}s ===")
             
             if not quiet:
-                print(f"✅ Video trimmed successfully ({trim_result['duration']:.1f}s)")
-                print(f"   Trimmed video: {Path(trimmed_video_path).name}")
+                print(f"✅ Video processed successfully ({trim_result['duration']:.1f}s)")
+                if trim_result['downscaled']:
+                    print(f"   ⚡ Trimmed + downscaled to 480p in {trim_result['encoding_time']:.1f}s")
+                else:
+                    print(f"   ✂️  Trimmed in {trim_result['encoding_time']:.1f}s")
+                print(f"   📦 Final size: {trim_result['final_size_mb']:.1f} MB")
             
-            # Replace video_path with trimmed version
-            video_path = trimmed_video_path
-            log_debug(f"=== DEBUG: Will use trimmed video: {video_path} ===")
+            log_debug(f"=== DEBUG: Will use processed video: {video_path} ===")
         
         # Workflow 4 (LEGACY): Automatic clip detection (can cause deadlock if called from plugin!)
         # This workflow is deprecated - use C++ async clip bounds read instead
@@ -1035,6 +1085,23 @@ def main():
                     print(f"✅ Video trimmed successfully ({trim_result['duration']:.1f}s)")
                     print(f"   Trimmed video: {Path(trimmed_video_path).name}")
                 
+                # Check if trimmed video should be downscaled
+                file_size_mb = Path(trimmed_video_path).stat().st_size / (1024 * 1024)
+                log_debug(f"=== DEBUG: Trimmed video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+                
+                if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
+                    log_debug(f"=== DEBUG: File size exceeds threshold, downscaling to 480p... ===")
+                    downscale_result = downscale_video(trimmed_video_path)
+                    if downscale_result['success']:
+                        log_debug(f"=== DEBUG: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
+                        trimmed_video_path = downscale_result['output_path']
+                        if not quiet:
+                            print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
+                    else:
+                        log_debug(f"=== DEBUG: Downscaling failed: {downscale_result['error']} ===")
+                else:
+                    log_debug(f"=== DEBUG: File size OK, no downscaling needed ===")
+                
                 # Replace video_path with trimmed version
                 video_path = trimmed_video_path
                 
@@ -1132,6 +1199,23 @@ def main():
             if not quiet:
                 print(f"✅ Video trimmed successfully ({trim_result['duration']:.1f}s)")
                 print(f"   Trimmed video: {Path(trimmed_video_path).name}")
+            
+            # Check if trimmed video should be downscaled
+            file_size_mb = Path(trimmed_video_path).stat().st_size / (1024 * 1024)
+            log_debug(f"=== DEBUG: Trimmed video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+            
+            if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
+                log_debug(f"=== DEBUG: File size exceeds threshold, downscaling to 480p... ===")
+                downscale_result = downscale_video(trimmed_video_path)
+                if downscale_result['success']:
+                    log_debug(f"=== DEBUG: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
+                    trimmed_video_path = downscale_result['output_path']
+                    if not quiet:
+                        print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
+                else:
+                    log_debug(f"=== DEBUG: Downscaling failed: {downscale_result['error']} ===")
+            else:
+                log_debug(f"=== DEBUG: File size OK, no downscaling needed ===")
             
             # Replace video_path with trimmed version
             video_path = trimmed_video_path
