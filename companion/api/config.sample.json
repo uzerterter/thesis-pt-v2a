@@ -1,0 +1,7 @@
+{
+  "use_cloudflared": false,
+  "api_url_direct": "http://localhost:8000",
+  "api_url_cloudflared": "https://mmaaudio.linwig.de",
+  "cf_access_client_id": "",
+  "cf_access_client_secret": ""
+}

@@ -19,6 +19,8 @@ from .config import (
     DEFAULT_CFG_STRENGTH,
     DEFAULT_OUTPUT_FORMAT,
     DEFAULT_TIMEOUT,
+    get_api_url,
+    get_cf_headers,
 )
 
 
@@ -38,7 +40,8 @@ def check_api_health(api_url: str = DEFAULT_API_URL, quiet: bool = False) -> boo
         >>>     print("API is online!")
     """
     try:
-        response = requests.get(f"{api_url}/", timeout=10)
+        url = api_url or get_api_url()
+        response = requests.get(url, timeout=10, headers=get_cf_headers())
         response.raise_for_status()
         return True
     except requests.exceptions.RequestException as e:
@@ -65,7 +68,12 @@ def get_available_models(api_url: str = DEFAULT_API_URL, quiet: bool = False) ->
         >>>     print(f"Loaded: {models['loaded_models']}")
     """
     try:
-        response = requests.get(f"{api_url}/models", timeout=10)
+        url = api_url or get_api_url()
+        response = requests.get(
+            f"{url}/models",
+            timeout=10,
+            headers=get_cf_headers(),
+        )
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -162,6 +170,7 @@ def generate_audio(
     
     start_time = time.time()
     
+    headers = get_cf_headers()
     try:
         with open(video_path, 'rb') as video_file:
             files = {"video": (Path(video_path).name, video_file, "video/mp4")}
@@ -169,8 +178,10 @@ def generate_audio(
             if not quiet:
                 print("⏳ Processing... (this may take a minute)")
             
+            url = api_url or get_api_url()
             response = requests.post(
-                f"{api_url}/generate",
+                f"{url}/generate",
+                headers=headers,
                 files=files,
                 data=data,
                 timeout=timeout
