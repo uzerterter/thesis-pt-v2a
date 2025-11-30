@@ -54,8 +54,8 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     negativePromptInput.setMultiLine (true);
     negativePromptInput.setReturnKeyStartsNewLine (true);
     negativePromptInput.setScrollbarsShown (true);
-    negativePromptInput.setTextToShowWhenEmpty ("voices, music, melody, singing, speech", juce::Colours::grey);
-    negativePromptInput.setText ("voices, music, melody, singing, speech");  // Set default value
+    negativePromptInput.setTextToShowWhenEmpty ("voices, music, melody, singing, speech,interference", juce::Colours::grey);
+    negativePromptInput.setText ("voices, music, melody, singing, speech, interference");  // Set default value
     addAndMakeVisible (negativePromptInput);
     
     // Configure seed label
@@ -944,6 +944,11 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         {
             // Clip not trimmed and no manual offset - use full video
             juce::Logger::writeToLog ("Clip not trimmed - using full source video");
+            
+            // CRITICAL: Reset clip bounds from previous renders
+            // Otherwise old clip bounds will be passed to Python instead of using full video
+            clipStartSeconds = -1.0f;
+            clipEndSeconds = -1.0f;
         }
         
         //======================================================================

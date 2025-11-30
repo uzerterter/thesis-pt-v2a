@@ -46,17 +46,24 @@ from datetime import datetime
 # Import from refactored modules
 from api import (
     SUPPORTED_VIDEO_FORMATS,
-)
-from api.config import (
     DEFAULT_NEGATIVE_PROMPT,
     DEFAULT_SEED,
     DEFAULT_TIMEOUT,
+    VIDEO_DOWNSCALE_THRESHOLD_MB,
+    HYVF_DEFAULT_API_URL,
+    HYVF_DEFAULT_NUM_STEPS,
+    HYVF_DEFAULT_CFG_STRENGTH,
+    HYVF_DEFAULT_MODEL_SIZE,
+    DEFAULT_OUTPUT_FORMAT,
 )
 from video import (
     check_ffmpeg_available,
     trim_video_segment,
+    trim_and_maybe_downscale_video,
     validate_video_duration,
     validate_video_file,
+    get_video_bitrate,
+    downscale_video,
 )
 from ptsl_integration import (
     get_video_timeline_selection,
@@ -77,13 +84,6 @@ from api.hunyuanvideo_foley_client import (
     get_available_models,
     generate_audio,
 )
-
-# HunyuanVideo-Foley API Configuration
-DEFAULT_HYVF_API_URL = "http://localhost:8001"
-DEFAULT_MODEL_SIZE = "xxl"  # "xl" (faster, 8-12GB VRAM) or "xxl" (higher quality, 16-20GB VRAM)
-DEFAULT_NUM_STEPS = 50
-DEFAULT_CFG_STRENGTH = 4.5
-DEFAULT_OUTPUT_FORMAT = "wav"  # HunyuanVideo-Foley outputs 48kHz audio
 
 # Legacy configuration (for backwards compatibility)
 DEFAULT_VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\data\MMAudio_examples\noSound\sora_galloping.mp4"
@@ -152,8 +152,8 @@ Examples:
         '--model-size',
         type=str,
         choices=['xl', 'xxl'],
-        default=DEFAULT_MODEL_SIZE,
-        help=f'Model size: "xl" (faster, 8-12GB VRAM) or "xxl" (higher quality, 16-20GB VRAM, default: {DEFAULT_MODEL_SIZE})'
+        default=HYVF_DEFAULT_MODEL_SIZE,
+        help=f'Model size: "xl" (faster, 8-12GB VRAM) or "xxl" (higher quality, 16-20GB VRAM, default: {HYVF_DEFAULT_MODEL_SIZE})'
     )
     
     # Output options
@@ -208,15 +208,15 @@ Examples:
     parser.add_argument(
         '--steps',
         type=int,
-        default=DEFAULT_NUM_STEPS,
-        help=f'Number of generation steps (default: {DEFAULT_NUM_STEPS})'
+        default=HYVF_DEFAULT_NUM_STEPS,
+        help=f'Number of generation steps (default: {HYVF_DEFAULT_NUM_STEPS})'
     )
     
     parser.add_argument(
         '--cfg-strength',
         type=float,
-        default=DEFAULT_CFG_STRENGTH,
-        help=f'CFG strength for prompt guidance (default: {DEFAULT_CFG_STRENGTH})'
+        default=HYVF_DEFAULT_CFG_STRENGTH,
+        help=f'CFG strength for prompt guidance (default: {HYVF_DEFAULT_CFG_STRENGTH})'
     )
     
     parser.add_argument(
@@ -239,8 +239,8 @@ Examples:
     parser.add_argument(
         '--api-url',
         type=str,
-        default=DEFAULT_HYVF_API_URL,
-        help=f'API server URL (default: {DEFAULT_HYVF_API_URL})'
+        default=HYVF_DEFAULT_API_URL,
+        help=f'API server URL (default: {HYVF_DEFAULT_API_URL})'
     )
     
     parser.add_argument(
@@ -354,9 +354,9 @@ def get_user_inputs_interactive():
             print("   ⚠️  Please enter a valid number.")
     
     while True:
-        model_size_input = input(f"🎛️  Model Size [xl/xxl] (Default: {DEFAULT_MODEL_SIZE}): ").strip().lower()
+        model_size_input = input(f"🎛️  Model Size [xl/xxl] (Default: {HYVF_DEFAULT_MODEL_SIZE}): ").strip().lower()
         if not model_size_input:
-            model_size = DEFAULT_MODEL_SIZE
+            model_size = HYVF_DEFAULT_MODEL_SIZE
             break
         if model_size_input in ['xl', 'xxl']:
             model_size = model_size_input
@@ -442,6 +442,7 @@ def main():
             try:
                 video_path = str(validate_video_file(args.video))
                 log_debug(f"=== DEBUG HYVF: Video validated: {Path(video_path).name} ===")
+                
             except (FileNotFoundError, ValueError) as e:
                 log_debug(f"=== DEBUG HYVF: Video validation failed: {e} ===")
                 if not quiet:
@@ -501,6 +502,37 @@ def main():
                 print(f"📦 Available models: {models_info.get('available_models', [])}")
                 print(f"💾 Loaded models: {models_info.get('loaded_models', [])}")
         
+        # === Video Preprocessing (Downscaling) ===
+        # Check if video needs downscaling BEFORE workflow processing
+        # This handles untrimmed videos (trimmed videos are checked after trimming)
+        will_be_trimmed = (
+            (args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
+            (args.video_offset and args.timeline_start != 0.0 and args.timeline_end != 0.0)
+        )
+        
+        if not will_be_trimmed:
+            # Video won't be trimmed, check if downscaling needed now
+            file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
+            log_debug(f"=== DEBUG HYVF: Untrimmed video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+            
+            if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
+                log_debug(f"=== DEBUG HYVF: File size exceeds threshold, downscaling to 480p... ===")
+                downscale_result = downscale_video(video_path)
+                if downscale_result['success']:
+                    log_debug(f"=== DEBUG HYVF: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
+                    log_debug(f"=== DEBUG HYVF: FPS preserved: {downscale_result['original_fps']:.1f} fps ===")
+                    video_path = downscale_result['output_path']
+                    if not quiet:
+                        print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
+                else:
+                    log_debug(f"=== DEBUG HYVF: Downscaling failed: {downscale_result['error']} ===")
+                    if not quiet:
+                        print(f"⚠️ Downscaling failed, using original video")
+            else:
+                log_debug(f"=== DEBUG HYVF: File size OK, no downscaling needed ===")
+        else:
+            log_debug(f"=== DEBUG HYVF: Video will be trimmed, downscaling will occur after trimming ===")
+        
         # === Video Trimming (if needed) ===
         # Support same workflows as MMAudio client for consistency
         
@@ -511,7 +543,7 @@ def main():
                 print(f"\n✂️  Trimming video to clip bounds...")
                 print(f"   Source range: {args.clip_start_seconds}s - {args.clip_end_seconds}s")
             
-            trim_result = trim_video_segment(
+            trim_result = trim_and_maybe_downscale_video(
                 video_path=video_path,
                 start_seconds=args.clip_start_seconds,
                 end_seconds=args.clip_end_seconds
@@ -524,9 +556,16 @@ def main():
                 return 1
             
             video_path = trim_result['output_path']
-            log_debug(f"=== DEBUG HYVF: Trimmed video saved: {Path(video_path).name} ===")
+            log_debug(f"=== DEBUG HYVF: Processed video saved: {Path(video_path).name} ===")
+            log_debug(f"=== DEBUG HYVF: Original size: {trim_result['original_size_mb']:.1f} MB, Estimated: {trim_result['estimated_size_mb']:.1f} MB, Final: {trim_result['final_size_mb']:.1f} MB ===")
+            log_debug(f"=== DEBUG HYVF: Downscaled: {trim_result['downscaled']}, Encoding time: {trim_result['encoding_time']:.1f}s ===")
+            
             if not quiet:
-                print(f"✅ Trimmed video: {Path(video_path).name}")
+                if trim_result['downscaled']:
+                    print(f"✅ Video trimmed and downscaled to 480p in {trim_result['encoding_time']:.1f}s")
+                else:
+                    print(f"✅ Video trimmed in {trim_result['encoding_time']:.1f}s")
+                print(f"   📦 Final size: {trim_result['final_size_mb']:.1f} MB")
         
         elif args.video_offset:
             # Manual offset provided (legacy workflow)
@@ -557,7 +596,7 @@ def main():
                 if not quiet:
                     print(f"   Trimming source video: {start_in_source}s - {end_in_source}s")
                 
-                trim_result = trim_video_segment(
+                trim_result = trim_and_maybe_downscale_video(
                     video_path=video_path,
                     start_seconds=start_in_source,
                     end_seconds=end_in_source
@@ -569,8 +608,14 @@ def main():
                     return 1
                 
                 video_path = trim_result['output_path']
+                log_debug(f"=== DEBUG HYVF: Original size: {trim_result['original_size_mb']:.1f} MB, Final: {trim_result['final_size_mb']:.1f} MB ===")
+                log_debug(f"=== DEBUG HYVF: Downscaled: {trim_result['downscaled']}, Encoding time: {trim_result['encoding_time']:.1f}s ===")
+                
                 if not quiet:
-                    print(f"✅ Trimmed video: {Path(video_path).name}")
+                    if trim_result['downscaled']:
+                        print(f"✅ Video trimmed and downscaled to 480p in {trim_result['encoding_time']:.1f}s")
+                    else:
+                        print(f"✅ Video trimmed in {trim_result['encoding_time']:.1f}s")
         
         # Generate audio
         log_debug(f"=== DEBUG HYVF: Starting audio generation ===")

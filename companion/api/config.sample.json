@@ -1,7 +1,15 @@
 {
   "use_cloudflared": false,
-  "api_url_direct": "http://localhost:8000",
-  "api_url_cloudflared": "https://mmaaudio.linwig.de",
+  "services": {
+    "mmaudio": {
+      "api_url_direct": "http://localhost:8000",
+      "api_url_cloudflared": "https://mmaudio.linwig.de"
+    },
+    "hunyuan": {
+      "api_url_direct": "http://localhost:8001",
+      "api_url_cloudflared": "https://hyvf.linwig.de"
+    }
+  },
   "cf_access_client_id": "",
   "cf_access_client_secret": ""
 }

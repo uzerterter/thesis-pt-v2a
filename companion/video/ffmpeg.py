@@ -7,10 +7,12 @@ Provides:
 - Video duration detection using FFprobe
 """
 
+import os
 import subprocess
 import shutil
 import tempfile
 import json
+import time
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -183,14 +185,19 @@ def trim_video_segment(
         
         # Build FFmpeg command
         # Use embedded/detected FFmpeg path instead of relying on PATH
-        # -ss: start time, -to: end time, -c copy: copy codec (no re-encode)
+        # Re-encode for accurate file sizes (not -c copy)
+        from api.config import FFMPEG_CRF_QUALITY, FFMPEG_PRESET
+        
         cmd = [
             ffmpeg_exe,
             '-y',  # Overwrite output file
             '-ss', str(start_seconds),
             '-to', str(end_seconds),
             '-i', str(video_path),
-            '-c', 'copy',  # Fast copy codec (no re-encode)
+            '-c:v', 'libx264',      # Re-encode video
+            '-preset', FFMPEG_PRESET,  # Fast encoding
+            '-crf', str(FFMPEG_CRF_QUALITY),  # Good quality
+            '-c:a', 'aac',          # Audio codec
             output_path
         ]
         
@@ -240,6 +247,182 @@ def trim_video_segment(
             'duration': None,
             'error': f'Trimming error: {str(e)}'
         }
+
+
+def trim_and_maybe_downscale_video(
+    video_path: str,
+    start_seconds: float,
+    end_seconds: float,
+    output_path: Optional[str] = None,
+    target_height: Optional[int] = None,
+    crf: Optional[int] = None,
+    preset: Optional[str] = None,
+    size_threshold_mb: Optional[float] = None
+) -> Dict[str, any]:
+    """
+    Smart trim: Downscales to 480p if estimated size exceeds threshold.
+    
+    Combines trimming and optional downscaling in ONE FFmpeg operation for better performance.
+    Estimates trimmed file size based on duration ratio and downscales only if necessary.
+    
+    Logic:
+    1. Estimate trimmed file size: original_size × (trim_duration / original_duration)
+    2. If estimated size > threshold: Trim + downscale to 480p (ONE operation)
+    3. Else: Just trim at original resolution
+    
+    Note:
+        - May upscale videos <480p, but this is acceptable for audio generation
+        - MMAudio uses 384×384, HunyuanVideo-Foley uses 256×256/512×512
+        - Both models downscale anyway, so upscaling 360p→480p has negligible impact
+    
+    Args:
+        video_path: Input video path
+        start_seconds: Trim start time
+        end_seconds: Trim end time
+        output_path: Output path (auto-generated if None)
+        target_height: Downscale target height (default: from config.FFMPEG_TARGET_HEIGHT)
+        crf: Quality factor 0-51, lower=better (default: from config.FFMPEG_CRF_QUALITY)
+        preset: FFmpeg preset ultrafast/veryfast/fast/medium (default: from config.FFMPEG_PRESET)
+        size_threshold_mb: Size threshold to trigger downscaling (default: from config.VIDEO_DOWNSCALE_THRESHOLD_MB)
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'output_path': str,
+            'duration': float,
+            'downscaled': bool,
+            'original_size_mb': float,
+            'estimated_size_mb': float,
+            'final_size_mb': float,
+            'encoding_time': float,
+            'error': str or None
+        }
+    
+    Example:
+        >>> result = trim_and_maybe_downscale_video(
+        >>>     "large_video.mp4",
+        >>>     start_seconds=5.0,
+        >>>     end_seconds=10.0
+        >>> )
+        >>> if result['success']:
+        >>>     print(f"Downscaled: {result['downscaled']}")
+        >>>     print(f"Final size: {result['final_size_mb']} MB")
+    """
+    try:
+        # Import settings from config if not provided
+        from api.config import (
+            VIDEO_DOWNSCALE_THRESHOLD_MB,
+            FFMPEG_CRF_QUALITY,
+            FFMPEG_PRESET,
+            FFMPEG_TARGET_HEIGHT
+        )
+        
+        if size_threshold_mb is None:
+            size_threshold_mb = VIDEO_DOWNSCALE_THRESHOLD_MB
+        if crf is None:
+            crf = FFMPEG_CRF_QUALITY
+        if preset is None:
+            preset = FFMPEG_PRESET
+        if target_height is None:
+            target_height = FFMPEG_TARGET_HEIGHT
+        
+        # Validate input
+        if not Path(video_path).exists():
+            return {'success': False, 'error': f'Video not found: {video_path}'}
+        
+        # Get FFmpeg
+        ffmpeg_check = check_ffmpeg_available()
+        if not ffmpeg_check['available']:
+            return {'success': False, 'error': f'FFmpeg not available: {ffmpeg_check["error"]}'}
+        
+        ffmpeg_path = ffmpeg_check['path']
+        
+        # 1. Estimate trimmed size based on duration percentage
+        original_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
+        duration_result = get_video_duration(video_path)
+        
+        if duration_result['success']:
+            original_duration = duration_result['duration']
+            trim_duration = end_seconds - start_seconds
+            # Simple percentage-based estimation
+            duration_percentage = trim_duration / original_duration
+            estimated_size_mb = original_size_mb * duration_percentage
+        else:
+            # Conservative: assume trimmed will be same size
+            estimated_size_mb = original_size_mb
+        
+        # 2. Decide: Downscale or not?
+        should_downscale = estimated_size_mb >= size_threshold_mb
+        
+        # 3. Generate output path
+        if output_path is None:
+            temp_dir = Path(tempfile.gettempdir()) / "pt_v2a"
+            temp_dir.mkdir(exist_ok=True)
+            timestamp = int(Path(video_path).stat().st_mtime)
+            suffix = "_480p" if should_downscale else ""
+            output_path = str(temp_dir / f"trimmed_{timestamp}_{start_seconds}_{end_seconds}{suffix}.mp4")
+        
+        # 4. Build FFmpeg command (combined trim + optional downscale)
+        start_time = time.time()
+        
+        if should_downscale:
+            # Trim + Downscale to 480p in ONE operation
+            cmd = [
+                str(ffmpeg_path),
+                '-y',
+                '-ss', str(start_seconds),
+                '-to', str(end_seconds),
+                '-i', str(video_path),
+                '-vf', f'scale=-2:{target_height}',  # Downscale (may upscale if <480p)
+                '-c:v', 'libx264',
+                '-preset', preset,
+                '-crf', str(crf),
+                '-c:a', 'aac',
+                output_path
+            ]
+        else:
+            # Just trim (preserve original resolution)
+            cmd = [
+                str(ffmpeg_path),
+                '-y',
+                '-ss', str(start_seconds),
+                '-to', str(end_seconds),
+                '-i', str(video_path),
+                '-c:v', 'libx264',
+                '-preset', preset,
+                '-crf', str(crf),
+                '-c:a', 'aac',
+                output_path
+            ]
+        
+        # 5. Execute
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        encoding_time = time.time() - start_time
+        
+        if result.returncode != 0:
+            return {'success': False, 'error': f'FFmpeg failed: {result.stderr}'}
+        
+        if not Path(output_path).exists():
+            return {'success': False, 'error': 'Output file not created'}
+        
+        final_size_mb = Path(output_path).stat().st_size / (1024 * 1024)
+        
+        return {
+            'success': True,
+            'output_path': output_path,
+            'duration': end_seconds - start_seconds,
+            'downscaled': should_downscale,
+            'original_size_mb': round(original_size_mb, 2),
+            'estimated_size_mb': round(estimated_size_mb, 2),
+            'final_size_mb': round(final_size_mb, 2),
+            'encoding_time': round(encoding_time, 2),
+            'error': None
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'error': 'Encoding timeout (60s)'}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 
 
 def get_video_duration(video_path: str) -> Dict[str, any]:
@@ -414,4 +597,285 @@ def get_video_duration(video_path: str) -> Dict[str, any]:
             'duration': None,
             'error': f'Duration check error: {str(e)}'
         }
+
+
+def get_video_bitrate(video_path: str) -> Dict[str, any]:
+    """
+    Get video bitrate using FFprobe.
+    
+    Args:
+        video_path: Path to video file
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'bitrate_mbps': float,  # Megabits per second
+            'duration': float,      # Seconds
+            'error': str or None
+        }
+    
+    Example:
+        >>> result = get_video_bitrate("video.mp4")
+        >>> if result['success']:
+        >>>     print(f"Bitrate: {result['bitrate_mbps']:.1f} Mbps")
+    """
+    try:
+        # Get FFprobe path
+        try:
+            import imageio_ffmpeg
+            ffprobe_path = imageio_ffmpeg.get_ffmpeg_exe().replace('ffmpeg', 'ffprobe')
+        except ImportError:
+            ffprobe_path = shutil.which('ffprobe')
+        
+        if not ffprobe_path:
+            return {
+                'success': False,
+                'bitrate_mbps': 0,
+                'duration': 0,
+                'error': 'FFprobe not found'
+            }
+        
+        # FFprobe command to get bitrate and duration
+        command = [
+            ffprobe_path,
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'format=bit_rate,duration',
+            '-of', 'json',
+            video_path
+        ]
+        
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        
+        if result.returncode != 0:
+            return {
+                'success': False,
+                'bitrate_mbps': 0,
+                'duration': 0,
+                'error': f'FFprobe failed: {result.stderr}'
+            }
+        
+        data = json.loads(result.stdout)
+        
+        # Extract bitrate (in bits per second)
+        bitrate_bps = int(data.get('format', {}).get('bit_rate', 0))
+        bitrate_mbps = bitrate_bps / 1_000_000  # Convert to Mbps
+        
+        # Extract duration
+        duration = float(data.get('format', {}).get('duration', 0))
+        
+        return {
+            'success': True,
+            'bitrate_mbps': round(bitrate_mbps, 2),
+            'duration': round(duration, 2),
+            'error': None
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'bitrate_mbps': 0,
+            'duration': 0,
+            'error': 'FFprobe timeout (5s limit)'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'bitrate_mbps': 0,
+            'duration': 0,
+            'error': str(e)
+        }
+
+
+def downscale_video(
+    video_path: str,
+    output_path: str = None,
+    target_height: Optional[int] = None,
+    crf: Optional[int] = None,
+    preset: Optional[str] = None
+) -> Dict[str, any]:
+    """
+    Downscale video to target height while preserving FPS and aspect ratio.
+    
+    Only changes:
+    - Resolution height (to 480p or specified)
+    - Bitrate (via CRF quality-based encoding)
+    
+    Preserves:
+    - FPS (framerate)
+    - Aspect ratio (width calculated automatically)
+    - Duration
+    
+    Args:
+        video_path: Input video path
+        output_path: Output path (default: temp file)
+        target_height: Target height in pixels (default: from config.FFMPEG_TARGET_HEIGHT)
+        crf: Quality factor 0-51, lower=better (default: from config.FFMPEG_CRF_QUALITY)
+        preset: FFmpeg preset ultrafast/veryfast/fast/medium (default: from config.FFMPEG_PRESET)
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'output_path': str,
+            'original_size_mb': float,
+            'downscaled_size_mb': float,
+            'compression_ratio': float,
+            'encoding_time': float,
+            'original_fps': float,
+            'error': str or None
+        }
+    
+    Example:
+        >>> result = downscale_video("large_video.mov")
+        >>> if result['success']:
+        >>>     print(f"Compressed {result['compression_ratio']}x smaller")
+        >>>     print(f"New file: {result['output_path']}")
+    """
+    import time
+    
+    try:
+        # Import settings from config if not provided
+        from api.config import (
+            FFMPEG_CRF_QUALITY,
+            FFMPEG_PRESET,
+            FFMPEG_TARGET_HEIGHT
+        )
+        
+        if crf is None:
+            crf = FFMPEG_CRF_QUALITY
+        if preset is None:
+            preset = FFMPEG_PRESET
+        if target_height is None:
+            target_height = FFMPEG_TARGET_HEIGHT
+        
+        # Get FFmpeg/FFprobe paths
+        # Priority: imageio_ffmpeg (embedded in plugin) > system PATH
+        ffmpeg_path = None
+        ffprobe_path = None
+        
+        try:
+            import imageio_ffmpeg
+            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+            
+            # Try to find ffprobe next to ffmpeg
+            ffmpeg_dir = Path(ffmpeg_path).parent
+            if os.name == 'nt':  # Windows
+                ffprobe_candidate = ffmpeg_dir / 'ffprobe.exe'
+            else:  # Linux/Mac
+                ffprobe_candidate = ffmpeg_dir / 'ffprobe'
+            
+            if ffprobe_candidate.exists():
+                ffprobe_path = str(ffprobe_candidate)
+            else:
+                # Fallback to system PATH
+                ffprobe_path = shutil.which('ffprobe')
+                
+        except ImportError:
+            # Fallback to system PATH for both
+            ffmpeg_path = shutil.which('ffmpeg')
+            ffprobe_path = shutil.which('ffprobe')
+        
+        if not ffmpeg_path:
+            return {
+                'success': False,
+                'error': 'FFmpeg not found (imageio_ffmpeg not installed and not in PATH)'
+            }
+        
+        # Get original FPS using FFmpeg (no FFprobe needed!)
+        # FFmpeg prints stream info in stderr when analyzing input
+        try:
+            fps_cmd = [
+                str(ffmpeg_path),
+                '-i', str(video_path),
+                '-f', 'null',
+                '-'
+            ]
+            result = subprocess.run(fps_cmd, capture_output=True, text=True, timeout=5)
+            
+            # Parse FPS from stderr (format: "Stream #0:0: Video: ..., 30 fps" or "29.97 fps")
+            import re
+            fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', result.stderr)
+            if fps_match:
+                fps = float(fps_match.group(1))
+            else:
+                # Try alternative format: "30000/1001 fps"
+                fps_match = re.search(r'(\d+)/(\d+)\s*fps', result.stderr)
+                if fps_match:
+                    num, den = int(fps_match.group(1)), int(fps_match.group(2))
+                    fps = num / den
+                else:
+                    # Default fallback: 30 fps
+                    fps = 30.0
+                    
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Failed to get FPS: {e}'
+            }
+        
+        # Generate output path if not provided
+        if output_path is None:
+            temp_dir = Path(tempfile.gettempdir()) / "pt_v2a"
+            temp_dir.mkdir(exist_ok=True)
+            suffix = Path(video_path).suffix
+            output_path = str(temp_dir / f"downscaled_{int(time.time())}{suffix}")
+        
+        # Original file size
+        original_size = Path(video_path).stat().st_size / (1024 * 1024)  # MB
+        
+        # FFmpeg command: downscale with CRF quality-based encoding
+        command = [
+            str(ffmpeg_path),
+            '-i', str(video_path),
+            '-vf', f'scale=-2:{target_height}',  # -2 = auto-calculate width (even number)
+            '-c:v', 'libx264',
+            '-crf', str(crf),
+            '-preset', preset,
+            '-r', str(fps),  # EXPLICIT FPS (preserve original!)
+            '-an',           # Remove audio (not needed for video-to-audio models)
+            '-y',
+            str(output_path)
+        ]
+        
+        start_time = time.time()
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        encoding_time = time.time() - start_time
+        
+        if result.returncode != 0:
+            return {
+                'success': False,
+                'error': f'FFmpeg encoding failed: {result.stderr}'
+            }
+        
+        if not Path(output_path).exists():
+            return {
+                'success': False,
+                'error': 'Output file not created'
+            }
+        
+        downscaled_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
+        compression_ratio = original_size / downscaled_size if downscaled_size > 0 else 0
+        
+        return {
+            'success': True,
+            'output_path': output_path,
+            'original_size_mb': round(original_size, 2),
+            'downscaled_size_mb': round(downscaled_size, 2),
+            'compression_ratio': round(compression_ratio, 1),
+            'encoding_time': round(encoding_time, 2),
+            'original_fps': round(fps, 2),
+            'error': None
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'error': 'Encoding timeout (>30s)'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
 

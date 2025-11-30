@@ -1,5 +1,5 @@
 """
-Configuration constants and helpers for the MMAudio API client.
+Configuration constants and helpers for the MMAudio + HunyuanVideo-Foley clients.
 """
 from __future__ import annotations
 
@@ -11,63 +11,84 @@ from typing import Any, Dict
 _BASE_DIR = Path(__file__).resolve().parent
 _CONFIG_PATH = _BASE_DIR / "config.json"
 
+# =============================================================================
+# Shared Settings (Both MMAudio and HunyuanVideo-Foley)
+# =============================================================================
 # API Configuration defaults
 DEFAULT_API_URL = "http://localhost:8000"
 
 # Config defaults (can be overridden via companion/api/config.json)
 CONFIG_DEFAULTS: Dict[str, Any] = {
-  "use_cloudflared": False,
-  "api_url_direct": DEFAULT_API_URL,
-  "api_url_cloudflared": "",
-  "cf_access_client_id": "",
-  "cf_access_client_secret": "",
+    "use_cloudflared": False,
+    "services": {
+        "mmaudio": {
+            "api_url_direct": "http://localhost:8000",
+            "api_url_cloudflared": "",
+        },
+        "hunyuan": {
+            "api_url_direct": "http://localhost:8001",
+            "api_url_cloudflared": "",
+        },
+    },
+    "cf_access_client_id": "",
+    "cf_access_client_secret": "",
 }
 
 _config_cache: Dict[str, Any] | None = None
 
 
 def _load_config() -> Dict[str, Any]:
-    """Load the user config file (with sensible defaults)."""
+    """Load config.json, falling back to defaults."""
     global _config_cache
     if _config_cache is not None:
         return _config_cache
 
-    config = CONFIG_DEFAULTS.copy()
+    cfg = CONFIG_DEFAULTS.copy()
     if _CONFIG_PATH.exists():
         try:
-            file_data = json.loads(_CONFIG_PATH.read_text())
-            if isinstance(file_data, dict):
-                config.update(file_data)
+            data = json.loads(_CONFIG_PATH.read_text())
+            if isinstance(data, dict):
+                # Merge shallow keys, but keep nested dicts intact
+                cfg.update(data)
+                for service in ("mmaudio", "hunyuan"):
+                    svc_defaults = CONFIG_DEFAULTS["services"][service]
+                    cfg["services"].setdefault(service, svc_defaults.copy())
+                    cfg["services"][service] = {
+                        **svc_defaults,
+                        **cfg["services"].get(service, {}),
+                    }
         except json.JSONDecodeError:
-            # Keep defaults if the config is invalid.
             pass
-    _config_cache = config
-    return _config_cache
+
+    _config_cache = cfg
+    return cfg
 
 
 def reload_config() -> None:
-    """Clear the cached config (primarily for tests)."""
     global _config_cache
     _config_cache = None
 
 
 def get_config() -> Dict[str, Any]:
-    """Return a copy of the loaded config."""
     return _load_config().copy()
 
 
 def use_cloudflared() -> bool:
-    """True when the user wants to route requests through Cloudflare Tunnel."""
     cfg = _load_config()
-    return bool(cfg.get("use_cloudflared") and cfg.get("api_url_cloudflared"))
+    return bool(cfg.get("use_cloudflared"))
 
 
-def get_api_url() -> str:
-    """Return the currently active API URL (direct or Cloudflare)."""
+def get_service_urls(service: str) -> Dict[str, str]:
     cfg = _load_config()
+    services = cfg.get("services", {})
+    return services.get(service, {})
+
+
+def get_api_url(service: str) -> str:
+    service_cfg = get_service_urls(service)
     if use_cloudflared():
-        return cfg.get("api_url_cloudflared") or DEFAULT_API_URL
-    return cfg.get("api_url_direct") or DEFAULT_API_URL
+        return service_cfg.get("api_url_cloudflared") or service_cfg.get("api_url_direct") or ""
+    return service_cfg.get("api_url_direct") or ""
 
 
 def get_cf_headers() -> Dict[str, str]:
@@ -97,13 +118,36 @@ SUPPORTED_VIDEO_FORMATS = {
     ".m4v",
 }
 
-# Default generation parameters
-DEFAULT_NEGATIVE_PROMPT = "voices, music, melody, singing, speech"
+# Common generation parameters
+DEFAULT_NEGATIVE_PROMPT = "voices, music, melody, singing, speech,interference"
 DEFAULT_SEED = 42
-DEFAULT_NUM_STEPS = 25
-DEFAULT_CFG_STRENGTH = 4.5
-DEFAULT_MODEL = "large_44k_v2"
 
 # Output configuration
 DEFAULT_OUTPUT_FORMAT = "wav"  # "wav" or "flac"
 DEFAULT_TIMEOUT = 300  # seconds
+
+# Video preprocessing
+VIDEO_DOWNSCALE_THRESHOLD_MB = 2.0  # Downscale videos larger than this (MB) to 480p for faster upload
+
+# FFmpeg encoding settings
+FFMPEG_CRF_QUALITY = 25        # CRF quality (0-51, lower=better, 25=very good)
+FFMPEG_PRESET = "ultrafast"    # Encoding speed preset (ultrafast/veryfast/fast/medium)
+FFMPEG_TARGET_HEIGHT = 480     # Downscale target height in pixels (480p)
+
+# =============================================================================
+# MMAudio-Specific Settings (16kHz output, port 8000)
+# =============================================================================
+
+MMAUDIO_DEFAULT_API_URL = "http://localhost:8000"
+MMAUDIO_DEFAULT_NUM_STEPS = 25
+MMAUDIO_DEFAULT_CFG_STRENGTH = 4.5
+MMAUDIO_DEFAULT_MODEL = "large_44k_v2"
+
+# =============================================================================
+# HunyuanVideo-Foley-Specific Settings (48kHz output, port 8001)
+# =============================================================================
+
+HYVF_DEFAULT_API_URL = "http://localhost:8001"
+HYVF_DEFAULT_NUM_STEPS = 50
+HYVF_DEFAULT_CFG_STRENGTH = 4.5
+HYVF_DEFAULT_MODEL_SIZE = "xxl"  # "xl" or "xxl"

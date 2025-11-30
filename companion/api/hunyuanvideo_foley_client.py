@@ -13,8 +13,17 @@ from typing import Optional
 
 import requests
 
+from .config import (
+    HYVF_DEFAULT_API_URL,
+    HYVF_DEFAULT_MODEL_SIZE,
+    HYVF_DEFAULT_NUM_STEPS,
+    HYVF_DEFAULT_CFG_STRENGTH,
+    DEFAULT_OUTPUT_FORMAT,
+    DEFAULT_TIMEOUT,
+)
 
-def check_api_health(api_url: str = "http://localhost:8001", quiet: bool = False) -> bool:
+
+def check_api_health(api_url: str = HYVF_DEFAULT_API_URL, quiet: bool = False) -> bool:
     """
     Check if the HunyuanVideo-Foley API server is reachable.
     
@@ -39,7 +48,7 @@ def check_api_health(api_url: str = "http://localhost:8001", quiet: bool = False
         return False
 
 
-def get_available_models(api_url: str = "http://localhost:8001", quiet: bool = False) -> Optional[dict]:
+def get_available_models(api_url: str = HYVF_DEFAULT_API_URL, quiet: bool = False) -> Optional[dict]:
     """
     Get available models from the HunyuanVideo-Foley API.
     
@@ -72,15 +81,15 @@ def generate_audio(
     prompt: str,
     negative_prompt: str,
     seed: int,
-    model_size: str = "xxl",  # "xl" or "xxl" (HunyuanVideo-Foley specific)
+    model_size: str = HYVF_DEFAULT_MODEL_SIZE,
     duration: Optional[float] = None,
-    num_steps: int = 50,
-    cfg_strength: float = 4.5,
-    output_format: str = "wav",
+    num_steps: int = HYVF_DEFAULT_NUM_STEPS,
+    cfg_strength: float = HYVF_DEFAULT_CFG_STRENGTH,
+    output_format: str = DEFAULT_OUTPUT_FORMAT,
     full_precision: bool = False,  # Use float32 instead of float16
     output_path: Optional[str] = None,
     use_temp: bool = False,
-    timeout: int = 300,
+    timeout: int = DEFAULT_TIMEOUT,
     quiet: bool = False,
     verbose: bool = False
 ) -> Optional[str]:
