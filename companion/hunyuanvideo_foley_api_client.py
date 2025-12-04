@@ -45,6 +45,7 @@ from datetime import datetime
 
 # Import from refactored modules
 from api import (
+    get_api_url,
     SUPPORTED_VIDEO_FORMATS,
     DEFAULT_NEGATIVE_PROMPT,
     DEFAULT_SEED,
@@ -239,8 +240,8 @@ Examples:
     parser.add_argument(
         '--api-url',
         type=str,
-        default=HYVF_DEFAULT_API_URL,
-        help=f'API server URL (default: {HYVF_DEFAULT_API_URL})'
+        default=None,  # Will be set to get_api_url("hunyuan") if not provided
+        help=f'API server URL (default: from config.json or {HYVF_DEFAULT_API_URL})'
     )
     
     parser.add_argument(
@@ -377,6 +378,10 @@ def main():
     """Main entry point for the HunyuanVideo-Foley API client"""
     # Parse command line arguments  
     args = parse_arguments()
+    
+    # Set API URL from config if not explicitly provided
+    if args.api_url is None:
+        args.api_url = get_api_url("hunyuan")
     
     # DEBUG: File-based logging for background processes (stdout/stderr not captured!)
     log_file = os.path.join(tempfile.gettempdir(), "pt_v2a_hyvf_debug.log")

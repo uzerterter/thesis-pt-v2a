@@ -9,6 +9,8 @@ Provides:
 
 from .client import generate_audio, check_api_health, get_available_models
 from .config import (
+    # Config functions
+    get_api_url,
     # Shared settings
     SUPPORTED_VIDEO_FORMATS,
     DEFAULT_NEGATIVE_PROMPT,
@@ -36,6 +38,7 @@ __all__ = [
     'generate_audio',
     'check_api_health',
     'get_available_models',
+    'get_api_url',
     # Shared settings
     'SUPPORTED_VIDEO_FORMATS',
     'DEFAULT_NEGATIVE_PROMPT',

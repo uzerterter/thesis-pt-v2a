@@ -50,6 +50,7 @@ from api import (
     generate_audio,
     check_api_health,
     get_available_models,
+    get_api_url,
     DEFAULT_API_URL,
     SUPPORTED_VIDEO_FORMATS,
     DEFAULT_NEGATIVE_PROMPT,
@@ -243,8 +244,8 @@ Examples:
     parser.add_argument(
         '--api-url',
         type=str,
-        default=DEFAULT_API_URL,
-        help=f'API server URL (default: {DEFAULT_API_URL})'
+        default=None,  # Will be set to get_api_url("mmaudio") if not provided
+        help=f'API server URL (default: from config.json or {DEFAULT_API_URL})'
     )
     
     parser.add_argument(
@@ -383,6 +384,10 @@ def main():
     """Main entry point for the standalone API client"""
     # Parse command line arguments  
     args = parse_arguments()
+    
+    # Set API URL from config if not explicitly provided
+    if args.api_url is None:
+        args.api_url = get_api_url("mmaudio")
     
     # DEBUG: File-based logging for background processes (stdout/stderr not captured!)
     import tempfile

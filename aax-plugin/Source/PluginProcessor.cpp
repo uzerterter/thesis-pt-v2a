@@ -268,6 +268,69 @@ juce::File PtV2AProcessor::getAPIClientScript()
     return juce::File();
 }
 
+juce::String PtV2AProcessor::getConfiguredAPIUrl (const juce::String& service)
+{
+    juce::Logger::writeToLog ("=== Loading API URL from config.json ===");
+    
+    // Get config.json path from embedded Python resources
+    auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+    auto pluginDir = pluginFile.getParentDirectory();
+    auto contentsDir = pluginDir.getParentDirectory();
+    
+    auto configFile = contentsDir.getChildFile("Resources")
+                                 .getChildFile("python")
+                                 .getChildFile("Lib")
+                                 .getChildFile("site-packages")
+                                 .getChildFile("api")
+                                 .getChildFile("config.json");
+    
+    juce::Logger::writeToLog ("Config path: " + configFile.getFullPathName());
+    
+    if (!configFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("⚠️ config.json not found, using default URL");
+        return DEFAULT_API_URL;
+    }
+    
+    // Read and parse JSON
+    auto jsonText = configFile.loadFileAsString();
+    auto json = juce::JSON::parse (jsonText);
+    
+    if (auto* root = json.getDynamicObject())
+    {
+        bool useCloudflared = root->getProperty ("use_cloudflared");
+        juce::Logger::writeToLog ("use_cloudflared: " + juce::String(useCloudflared ? "true" : "false"));
+        
+        if (auto* services = root->getProperty ("services").getDynamicObject())
+        {
+            if (auto* serviceConfig = services->getProperty (service).getDynamicObject())
+            {
+                juce::String apiUrl;
+                
+                if (useCloudflared)
+                {
+                    apiUrl = serviceConfig->getProperty ("api_url_cloudflared").toString();
+                    if (apiUrl.isEmpty())
+                        apiUrl = serviceConfig->getProperty ("api_url_direct").toString();
+                }
+                else
+                {
+                    apiUrl = serviceConfig->getProperty ("api_url_direct").toString();
+                }
+                
+                if (apiUrl.isNotEmpty())
+                {
+                    juce::Logger::writeToLog ("✓ Loaded API URL: " + apiUrl);
+                    return apiUrl;
+                }
+            }
+        }
+    }
+    
+    juce::Logger::writeToLog ("⚠️ Failed to parse config.json, using default URL");
+    return DEFAULT_API_URL;
+}
+
 bool PtV2AProcessor::isAPIAvailable (const juce::String& apiUrl)
 {
     // Simple health check: try to reach API root endpoint

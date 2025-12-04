@@ -114,16 +114,22 @@ void PtV2AEditor::handleRenderButtonClicked()
     renderButton.setButtonText ("Checking...");
     
     //==========================================================================
-    // Step 1: Check API availability
+    // Step 1: Check API availability (uses config.json for cloudflared support)
     //==========================================================================
-    if (!processor.isAPIAvailable (PtV2AProcessor::DEFAULT_API_URL))
+    // Determine which API to check based on selected provider
+    int providerSelectedId = modelProviderComboBox.getSelectedId();
+    juce::String serviceName = (providerSelectedId == 2) ? "hunyuan" : "mmaudio";
+    juce::String providerDisplayName = (providerSelectedId == 2) ? "HunyuanVideo-Foley" : "MMAudio";
+    
+    juce::String apiUrl = processor.getConfiguredAPIUrl (serviceName);
+    if (!processor.isAPIAvailable (apiUrl))
     {
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
             "API Not Available",
-            "MMAudio API is not running!\n\n"
+            providerDisplayName + " API is not running!\n\n"
             "Please start the API server\n"
-            "Or check if it's running on http://localhost:8000",
+            "Trying to connect to: " + apiUrl,
             "OK"
         );
         
@@ -160,16 +166,22 @@ void PtV2AEditor::handleRenderDummyButtonClicked()
     renderDummyButton.setButtonText ("Generating...");
     
     //==========================================================================
-    // Step 1: Check API availability
+    // Step 1: Check API availability (uses config.json for cloudflared support)
     //==========================================================================
-    if (!processor.isAPIAvailable (PtV2AProcessor::DEFAULT_API_URL))
+    // Determine which API to check based on selected provider
+    int providerSelectedId = modelProviderComboBox.getSelectedId();
+    juce::String serviceName = (providerSelectedId == 2) ? "hunyuan" : "mmaudio";
+    juce::String providerDisplayName = (providerSelectedId == 2) ? "HunyuanVideo-Foley" : "MMAudio";
+    
+    juce::String apiUrl = processor.getConfiguredAPIUrl (serviceName);
+    if (!processor.isAPIAvailable (apiUrl))
     {
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
             "API Not Available",
-            "MMAudio API is not running!\n\n"
+            providerDisplayName + " API is not running!\n\n"
             "Please start the API server\n"
-            "Or check if it's running on http://localhost:8000",
+            "Trying to connect to: " + apiUrl,
             "OK"
         );
         
@@ -209,8 +221,7 @@ void PtV2AEditor::handleRenderDummyButtonClicked()
     juce::Logger::writeToLog ("Starting audio generation with dummy video...");
     juce::Logger::writeToLog ("Prompt: " + prompt.getText());
     
-    // Read model selection from UI
-    int providerSelectedId = modelProviderComboBox.getSelectedId();
+    // Read model selection from UI (providerSelectedId already declared above for API check)
     PtV2AProcessor::ModelProvider modelProvider = (providerSelectedId == 2) 
         ? PtV2AProcessor::ModelProvider::HunyuanVideoFoley 
         : PtV2AProcessor::ModelProvider::MMAudio;
@@ -1576,7 +1587,7 @@ void PtV2AEditor::handleModelProviderChange()
         // HunyuanVideo-Foley model sizes
         modelSizeComboBox.addItem ("XXL", 1);
         modelSizeComboBox.addItem ("XL", 2);
-        modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: XXL
+        modelSizeComboBox.setSelectedId (2, juce::dontSendNotification);  // Default: XL
         
         juce::Logger::writeToLog ("Model provider changed to: HunyuanVideo-Foley");
     }

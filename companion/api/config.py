@@ -23,11 +23,11 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
     "services": {
         "mmaudio": {
             "api_url_direct": "http://localhost:8000",
-            "api_url_cloudflared": "",
+            "api_url_cloudflared": "mmaudio.linwig.de",
         },
         "hunyuan": {
             "api_url_direct": "http://localhost:8001",
-            "api_url_cloudflared": "",
+            "api_url_cloudflared": "hyvf.linwig.de",
         },
     },
     "cf_access_client_id": "",

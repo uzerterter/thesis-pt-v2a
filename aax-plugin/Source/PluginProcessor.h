@@ -203,6 +203,15 @@ public:
     );
     
     /** 
+     * Get configured API URL from config.json
+     * Reads companion/api/config.json and returns appropriate URL based on use_cloudflared setting
+     * 
+     * @param service Service name ("mmaudio" or "hunyuan")
+     * @return Configured API URL (cloudflared or direct), or DEFAULT_API_URL on error
+     */
+    juce::String getConfiguredAPIUrl (const juce::String& service = "mmaudio");
+    
+    /** 
      * Check if MMAudio API server is reachable
      * Sends HTTP GET request to /health endpoint
      * 
