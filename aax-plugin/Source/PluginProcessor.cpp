@@ -333,28 +333,39 @@ juce::String PtV2AProcessor::getConfiguredAPIUrl (const juce::String& service)
 
 bool PtV2AProcessor::isAPIAvailable (const juce::String& apiUrl)
 {
-    // Simple health check: try to reach API root endpoint
-    juce::URL healthCheck (apiUrl + "/");
+    // Skip C++ HTTP check for Cloudflare URLs
+    // JUCE's WinHTTP has SSL/TLS issues with Cloudflare Access
+    // Python scripts handle Cloudflare authentication properly
+    if (apiUrl.contains ("cloudflare") || apiUrl.contains ("linwig.de"))
+    {
+        juce::Logger::writeToLog ("Cloudflare URL detected, skipping C++ health check (Python handles auth)");
+        return true;  // Python will do the actual check with proper SSL/auth
+    }
     
-    // Use JUCE's URL class to make HTTP GET request
+    // Simple health check for localhost: try to reach API root endpoint
+    juce::URL healthCheck (apiUrl + "/");
+    int statusCode = 0;
+    
+    juce::Logger::writeToLog ("Checking local API: " + apiUrl);
+    
     auto inputStream = healthCheck.createInputStream (
         juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
-            .withConnectionTimeoutMs (5000)  // 5 second timeout
+            .withConnectionTimeoutMs (3000)
+            .withNumRedirectsToFollow (0)
+            .withStatusCode (&statusCode)
     );
     
-    if (inputStream != nullptr)
+    if (inputStream != nullptr && statusCode >= 200 && statusCode < 300)
     {
         juce::String response = inputStream->readEntireStreamAsString();
-        
-        // Check if response contains expected API identifier
-        if (response.contains ("MMAudio") || response.contains ("status"))
+        if (response.contains ("MMAudio") || response.contains ("status") || response.contains ("HunyuanVideo"))
         {
-            juce::Logger::writeToLog ("API is available at: " + apiUrl);
+            juce::Logger::writeToLog ("✓ Local API available");
             return true;
         }
     }
     
-    juce::Logger::writeToLog ("API not available at: " + apiUrl);
+    juce::Logger::writeToLog ("✗ Local API not available (status: " + juce::String (statusCode) + ")");
     return false;
 }
 
