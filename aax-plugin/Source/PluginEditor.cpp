@@ -22,13 +22,6 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     };
     addAndMakeVisible (renderButton);
     
-    // Configure render dummy button with click handler
-    renderDummyButton.onClick = [this]
-    {
-        handleRenderDummyButtonClicked();
-    };
-    addAndMakeVisible (renderDummyButton);
-    
     // Configure open log button with click handler
     openLogButton.onClick = [this]
     {
@@ -36,15 +29,15 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     };
     addAndMakeVisible (openLogButton);
     
-    // Configure video offset label
-    videoOffsetLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (videoOffsetLabel);
+    // Configure video offset label (deprecated TODO remove in future)
+    // videoOffsetLabel.setJustificationType (juce::Justification::centredLeft);
+    // addAndMakeVisible (videoOffsetLabel);
     
-    // Configure video offset input
-    videoOffsetInput.setMultiLine (false);
-    videoOffsetInput.setReturnKeyStartsNewLine (false);
-    videoOffsetInput.setTextToShowWhenEmpty ("e.g., 00:02 (leave empty if video starts at timeline beginning)", juce::Colours::grey);
-    addAndMakeVisible (videoOffsetInput);
+    // Configure video offset input (deprecated TODO remove in future)
+    // videoOffsetInput.setMultiLine (false);
+    // videoOffsetInput.setReturnKeyStartsNewLine (false);
+    // videoOffsetInput.setTextToShowWhenEmpty ("e.g., 00:02 (leave empty if video starts at timeline beginning)", juce::Colours::grey);
+    // addAndMakeVisible (videoOffsetInput);
     
     // Configure negative prompt label
     negativePromptLabel.setJustificationType (juce::Justification::centredLeft);
@@ -69,9 +62,9 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     seedInput.setText ("42");  // Set default value
     addAndMakeVisible (seedInput);
     
-    // Configure high precision mode toggle
-    highPrecisionModeToggle.setToggleState (false, juce::dontSendNotification);  // Default: off (bfloat16)
-    addAndMakeVisible (highPrecisionModeToggle);
+    // Configure high precision mode toggle (deprecated TODO remove in future)
+    // highPrecisionModeToggle.setToggleState (false, juce::dontSendNotification);  // Default: off (bfloat16)
+    // addAndMakeVisible (highPrecisionModeToggle);
     
     // Configure model selection labels
     modelLabel.setJustificationType (juce::Justification::centredLeft);
@@ -147,158 +140,6 @@ void PtV2AEditor::handleRenderButtonClicked()
     // Start async PTSL process - timer will handle the rest!
     // The workflow continues in handleTimelineSelectionResult() after PTSL finishes
     startTimelineSelectionRead();
-}
-
-// Workflow now continues asynchronously in:
-//   1. timerCallback() - polls PTSL process status
-//   2. handleTimelineSelectionResult() - continues after PTSL finishes
-
-//==============================================================================
-// Event Handler - Render Dummy Button Click (Presentation Mode)
-//==============================================================================
-void PtV2AEditor::handleRenderDummyButtonClicked()
-{
-    juce::Logger::writeToLog ("=== Render Dummy Button Clicked (Presentation Mode) ===");
-    juce::Logger::writeToLog ("Prompt: " + prompt.getText());
-    
-    // Disable button during processing
-    renderDummyButton.setEnabled (false);
-    renderDummyButton.setButtonText ("Generating...");
-    
-    //==========================================================================
-    // Step 1: Check API availability (uses config.json for cloudflared support)
-    //==========================================================================
-    // Determine which API to check based on selected provider
-    int providerSelectedId = modelProviderComboBox.getSelectedId();
-    juce::String serviceName = (providerSelectedId == 2) ? "hunyuan" : "mmaudio";
-    juce::String providerDisplayName = (providerSelectedId == 2) ? "HunyuanVideo-Foley" : "MMAudio";
-    
-    juce::String apiUrl = processor.getConfiguredAPIUrl (serviceName);
-    if (!processor.isAPIAvailable (apiUrl))
-    {
-        juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::WarningIcon,
-            "API Not Available",
-            providerDisplayName + " API is not running!\n\n"
-            "Please start the API server\n"
-            "Trying to connect to: " + apiUrl,
-            "OK"
-        );
-        
-        renderDummyButton.setEnabled (true);
-        renderDummyButton.setButtonText ("Render (dummy video)");
-        return;
-    }
-    
-    //==========================================================================
-    // Step 2: Use predefined test video from temp/pt_v2a directory
-    //==========================================================================
-    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
-    auto ptv2aDir = tempDir.getChildFile ("ptv2a");
-    juce::File dummyVideo = ptv2aDir.getChildFile ("test_video.mp4");
-    
-    if (!dummyVideo.existsAsFile())
-    {
-        juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::WarningIcon,
-            "Dummy Video Not Found",
-            "Test video file not found at:\n\n" + dummyVideo.getFullPathName() + "\n\n"
-            "Please place a test video file at:\n" + 
-            ptv2aDir.getFullPathName() + "\\test_video.mp4",
-            "OK"
-        );
-        
-        renderDummyButton.setEnabled (true);
-        renderDummyButton.setButtonText ("Render (dummy video)");
-        return;
-    }
-    
-    juce::Logger::writeToLog ("Using dummy video from temp: " + dummyVideo.getFullPathName());
-    
-    //==========================================================================
-    // Step 3: Generate audio from dummy video
-    //==========================================================================
-    juce::Logger::writeToLog ("Starting audio generation with dummy video...");
-    juce::Logger::writeToLog ("Prompt: " + prompt.getText());
-    
-    // Read model selection from UI (providerSelectedId already declared above for API check)
-    PtV2AProcessor::ModelProvider modelProvider = (providerSelectedId == 2) 
-        ? PtV2AProcessor::ModelProvider::HunyuanVideoFoley 
-        : PtV2AProcessor::ModelProvider::MMAudio;
-    
-    juce::String modelSize = modelSizeComboBox.getText();
-    
-    // Read advanced parameters from UI
-    juce::String negativePrompt = negativePromptInput.getText().trim();
-    if (negativePrompt.isEmpty())
-        negativePrompt = "voices, music";
-    
-    juce::String seedText = seedInput.getText().trim();
-    int seed = seedText.isEmpty() ? 42 : seedText.getIntValue();
-    
-    bool useHighPrecision = highPrecisionModeToggle.getToggleState();
-    
-    juce::String generationError;
-    juce::String outputPath = processor.generateAudioFromVideo (
-        dummyVideo,
-        prompt.getText(),
-        negativePrompt,
-        seed,
-        modelProvider,   // Selected model provider
-        modelSize,       // Selected model size
-        "",  // No video offset for dummy video
-        0.0f,  // No timeline selection for dummy video
-        0.0f,  // No timeline selection for dummy video
-        false,  // No auto-detect for dummy video
-        -1.0f,  // No clip start
-        -1.0f,  // No clip end
-        useHighPrecision,
-        &generationError
-    );
-    
-    //==========================================================================
-    // Step 4: Handle generation result
-    //==========================================================================
-    if (outputPath.isEmpty())
-    {
-        juce::Logger::writeToLog ("ERROR: Audio generation failed (dummy video)");
-        juce::Logger::writeToLog ("Error: " + generationError);
-        
-        juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::WarningIcon,
-            "Generation Failed",
-            "Failed to generate audio:\n\n" + generationError,
-            "OK"
-        );
-        
-        renderDummyButton.setEnabled (true);
-        renderDummyButton.setButtonText ("Render (dummy video)");
-        return;
-    }
-    
-    //==========================================================================
-    // Success! Background process started
-    //==========================================================================
-    juce::Logger::writeToLog ("=== Generation Process Started (Dummy Video) ===");
-    juce::Logger::writeToLog ("Process running in background: " + outputPath);
-    
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::InfoIcon,
-        "Audio Generation Started",
-        "Audio generation started in background!\n\n"
-        "Video: test_video.mp4 (from temp/pt_v2a/)\n"
-        "Prompt: " + prompt.getText() + "\n\n"
-        "The process will:\n"
-        "1. Generate audio via MMAudio API \n"
-        "2. Import audio to Pro Tools timeline via PTSL\n\n"
-        "⏳ Please wait 1-2 minutes, then check the Pro Tools timeline\n"
-        "    for a new audio track.",
-        "OK"
-    );
-    
-    // Restore button state
-    renderDummyButton.setEnabled (true);
-    renderDummyButton.setButtonText ("Render (dummy video)");
 }
 
 //==============================================================================
@@ -397,20 +238,20 @@ void PtV2AEditor::resized()
     modelRow.removeFromLeft (10);
     modelSizeComboBox.setBounds (modelRow.removeFromLeft (180));
     modelRow.removeFromLeft (20);
-    highPrecisionModeToggle.setBounds (modelRow);
+    // highPrecisionModeToggle.setBounds (modelRow); // (deprecated TODO remove in future)
 
 
     // 30px spacing before next row
     r.removeFromTop (30);
     
-    // Video offset row: Label + Input field
-    auto offsetRow = r.removeFromTop (28);
-    // Label: 220px wide
-    videoOffsetLabel.setBounds (offsetRow.removeFromLeft (220));
+    // Video offset row: Label + Input field (deprecated TODO remove in future)
+    // auto offsetRow = r.removeFromTop (28);
+    // Label: 220px wide (deprecated TODO remove in future)
+    // videoOffsetLabel.setBounds (offsetRow.removeFromLeft (220));
     // 10px spacing between label and input
-    offsetRow.removeFromLeft (10);
-    // Input field: fixed 80px width
-    videoOffsetInput.setBounds (offsetRow.removeFromLeft (80));
+    // offsetRow.removeFromLeft (10);
+    // Input field: fixed 80px width (deprecated TODO remove in future)
+    // videoOffsetInput.setBounds (offsetRow.removeFromLeft (80));
 
     // 60px spacing before buttons section
     r.removeFromTop (60);
@@ -431,7 +272,7 @@ void PtV2AEditor::resized()
 
     renderButton.setBounds (startX, y, renderW, h);
     startX += renderW + gap1;
-    renderDummyButton.setBounds (startX, y, dummyW, h);
+    // renderDummyButton.setBounds (startX, y, dummyW, h); // (deprecated TODO remove in future)
     startX += dummyW + gap2;
     openLogButton.setBounds (startX, y, openLogW, h);
 
@@ -896,9 +737,9 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         //======================================================================
         // Step 4: Determine trimming workflow
         //======================================================================
-        // Check user preferences
-        juce::String manualOffset = videoOffsetInput.getText().trim();
-        bool hasManualOffset = manualOffset.isNotEmpty();
+        // Check user preferences (deprecated TODO remove in future)
+        // juce::String manualOffset = videoOffsetInput.getText().trim();
+        // bool hasManualOffset = manualOffset.isNotEmpty();
         
         // Decision logic (priority order):
         // 1. Manual offset + trimmed clip → Read clip bounds FIRST (needed for calculation), then use manual offset
@@ -906,36 +747,36 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         // 3. Auto-detect (trimmed, no manual offset) → Read clip bounds
         // 4. Full video (untrimmed, no manual offset) → Use entire source
         
-        if (hasManualOffset && clipIsTrimmed)
-        {
+        // if (hasManualOffset && clipIsTrimmed) (deprecated TODO remove in future)
+        //{
             // SPECIAL CASE: Manual offset on trimmed clip
             // Need to read clip bounds first for correct calculation in Python
             // Formula: source_start = clip_source_start + (timeline_pos - clip_timeline_start)
-            juce::Logger::writeToLog ("Manual offset on TRIMMED clip - reading clip bounds first...");
-            juce::Logger::writeToLog ("Manual offset value: " + manualOffset);
+           // juce::Logger::writeToLog ("Manual offset on TRIMMED clip - reading clip bounds first...");
+            // juce::Logger::writeToLog ("Manual offset value: " + manualOffset);
             
-            renderButton.setButtonText ("Reading Clip Bounds...");
+            // renderButton.setButtonText ("Reading Clip Bounds...");
             
             // Store video and prompt for later use (after clip bounds are read)
-            currentVideoPath = videoPath;
-            currentPrompt = prompt.getText();
+            // currentVideoPath = videoPath;
+            // currentPrompt = prompt.getText();
             
             // Start async clip bounds reading
             // handleClipBoundsResult() will detect manual offset and proceed accordingly
-            startClipBoundsRead (videoPath);
-            return;  // Exit here, will continue in handleClipBoundsResult()
-        }
-        else if (hasManualOffset)
-        {
+            // startClipBoundsRead (videoPath);
+            // return;  // Exit here, will continue in handleClipBoundsResult()
+        //}
+        // else if (hasManualOffset) (deprecated TODO remove in future)
+        // {
             // Manual offset on UNTRIMMED clip - can proceed directly
-            juce::Logger::writeToLog ("Using manual offset workflow (untrimmed): " + manualOffset);
+           //  juce::Logger::writeToLog ("Using manual offset workflow (untrimmed): " + manualOffset);
             
             // CRITICAL: Reset clip bounds from previous renders
             // Otherwise old clip bounds will be passed to Python instead of manual offset
-            clipStartSeconds = -1.0f;
-            clipEndSeconds = -1.0f;
-        }
-        else if (clipIsTrimmed)
+            // clipStartSeconds = -1.0f;
+            // clipEndSeconds = -1.0f;
+        // }
+        if (clipIsTrimmed)
         {
             juce::Logger::writeToLog ("Clip is trimmed - automatically reading clip bounds from Pro Tools...");
         
@@ -1013,18 +854,18 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     currentVideoPath = videoPath;
     currentPrompt = promptText;
     
-    // Get video clip offset from UI (if specified)
-    juce::String videoOffset = videoOffsetInput.getText().trim();
+    // Get video clip offset from UI (if specified) (deprecated TODO remove in future)
+    // juce::String videoOffset = videoOffsetInput.getText().trim();
     
     // Log clip bounds status
     if (clipStartSeconds >= 0.0f && clipEndSeconds >= 0.0f)
     {
         juce::Logger::writeToLog ("Using clip bounds: " + juce::String (clipStartSeconds, 3) + "s - " + juce::String (clipEndSeconds, 3) + "s");
     }
-    else if (videoOffset.isNotEmpty())
-    {
-        juce::Logger::writeToLog ("Using manual video offset: " + videoOffset);
-    }
+    // else if (videoOffset.isNotEmpty()) (deprecated TODO remove in future)
+    // {
+      //  juce::Logger::writeToLog ("Using manual video offset: " + videoOffset);
+    // }
     else
     {
         juce::Logger::writeToLog ("No trimming - using full video");
@@ -1038,7 +879,7 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     juce::String seedText = seedInput.getText().trim();
     int seed = seedText.isEmpty() ? 42 : seedText.getIntValue();  // Default seed = 42
     
-    bool useHighPrecision = highPrecisionModeToggle.getToggleState();
+    // bool useHighPrecision = highPrecisionModeToggle.getToggleState(); // (deprecated TODO remove in future)
     
     // Read model selection from UI
     int providerSelectedId = modelProviderComboBox.getSelectedId();
@@ -1050,7 +891,7 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     
     juce::String providerName = (modelProvider == PtV2AProcessor::ModelProvider::MMAudio) ? "MMAudio" : "HunyuanVideo-Foley";
     juce::Logger::writeToLog ("Model selection: " + providerName + " / " + modelSize);
-    juce::Logger::writeToLog ("Advanced params: negative_prompt=\"" + negativePrompt + "\", seed=" + juce::String(seed) + ", full_precision=" + (useHighPrecision ? "true" : "false"));
+    juce::Logger::writeToLog ("Advanced params: negative_prompt=\"" + negativePrompt + "\", seed=" + juce::String(seed) + ", full_precision=" + "false");
     
     // Call processor to start generation (returns immediately with expected output path)
     juce::String errorMessage;
@@ -1061,13 +902,13 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
         seed,            // User-controlled seed
         modelProvider,   // NEW: Selected model provider (MMAudio / HunyuanVideo-Foley)
         modelSize,       // NEW: Selected model size
-        videoOffset,
+        "",              // No manual offset (deprecated TODO remove in future),
         timelineInSeconds,
         timelineOutSeconds,
-        false,  // autoDetectClipBounds = false (legacy workflow, causes deadlock)
-        clipStartSeconds,  // Pass clip bounds if available
-        clipEndSeconds,    // Pass clip bounds if available
-        useHighPrecision,  // High precision mode flag
+        false,            // autoDetectClipBounds = false (legacy workflow, causes deadlock)
+        clipStartSeconds, // Pass clip bounds if available
+        clipEndSeconds,   // Pass clip bounds if available
+        false,            // High precision mode flag (deprecated TODO remove in future)
         &errorMessage
     );
     

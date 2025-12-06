@@ -102,7 +102,7 @@ private:
      *   - "Render (dummy video)" (default, ready)
      *   - "Generating..." (processing, disabled)
      */
-    juce::TextButton renderDummyButton { "Render (dummy video)" };
+    // juce::TextButton renderDummyButton { "Render (dummy video)" }; // (deprecated TODO remove in future)
     
     /**
      * Button to open log file in default text editor
@@ -111,9 +111,9 @@ private:
     juce::TextButton openLogButton { "Open Log" };
     
     /**
-     * Label for video clip offset input
+     * Label for video clip offset input (deprecated TODO remove in future)
      */
-    juce::Label videoOffsetLabel { {}, "Video Clip Start (to be removed):" };
+   // juce::Label videoOffsetLabel { {}, "Video Clip Start (to be removed):" };
     
     /**
      * Text input for video clip start position on timeline
@@ -136,7 +136,7 @@ private:
      *   - Used only when trimming video with FFmpeg
      *   - System automatically detects trimmed clips when possible
      */
-    juce::TextEditor videoOffsetInput;
+    // juce::TextEditor videoOffsetInput; (deprecated TODO remove in future)
     
     //==============================================================================
     // Advanced Generation Parameters
@@ -173,7 +173,7 @@ private:
     juce::Label seedLabel { {}, "Seed:" };
     
     /**
-     * High precision mode toggle
+     * High precision mode toggle (deprecated TODO remove in future)
      * 
      * When enabled:
      *   - Uses torch.float32 (higher quality, slower, more memory)
@@ -184,7 +184,7 @@ private:
      * 
      * Note: With RTX A6000 (48GB VRAM), float32 is recommended for production use
      */
-    juce::ToggleButton highPrecisionModeToggle { "High Precision Mode (float32)" };
+    // juce::ToggleButton highPrecisionModeToggle { "High Precision Mode (float32)" };
     
     //==============================================================================
     // Model Selection
