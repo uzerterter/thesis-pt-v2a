@@ -90,12 +90,12 @@ def get_available_models(api_url: str = DEFAULT_API_URL, quiet: bool = False) ->
 
 def generate_audio(
     api_url: str,
-    video_path: str,
+    video_path: Optional[str],  # Optional for T2A mode
     prompt: str,
     negative_prompt: str,
     seed: int,
     model_name: str = DEFAULT_MODEL,
-    duration: Optional[float] = None,
+    duration: Optional[float] = None,  # Required for T2A, auto-detected for V2A
     num_steps: int = DEFAULT_NUM_STEPS,
     cfg_strength: float = DEFAULT_CFG_STRENGTH,
     output_format: str = DEFAULT_OUTPUT_FORMAT,
@@ -107,7 +107,7 @@ def generate_audio(
     full_precision: bool = False
 ) -> Optional[str]:
     """
-    Generate audio from video using the MMAudio Standalone API.
+    Generate audio from video (V2A) or text only (T2A) using the MMAudio Standalone API.
     
     Args:
         api_url (str): API server URL
@@ -129,7 +129,8 @@ def generate_audio(
     Returns:
         str or None: Path to generated audio file if successful, None otherwise
     
-    Example:
+    Examples:
+        # V2A (Video-to-Audio)
         >>> audio_path = generate_audio(
         >>>     api_url="http://localhost:8000",
         >>>     video_path="video.mp4",
@@ -137,20 +138,50 @@ def generate_audio(
         >>>     negative_prompt="voices, music",
         >>>     seed=42
         >>> )
-        >>> if audio_path:
-        >>>     print(f"Generated: {audio_path}")
+        
+        # T2A (Text-to-Audio)
+        >>> audio_path = generate_audio(
+        >>>     api_url="http://localhost:8000",
+        >>>     video_path=None,  # No video for T2A
+        >>>     prompt="thunder and rain",
+        >>>     negative_prompt="voices, music",
+        >>>     seed=42,
+        >>>     duration=8.0  # Required for T2A
+        >>> )
     """
     
-    if not os.path.exists(video_path):
-        if not quiet:
-            print(f"❌ Video file not found: {video_path}")
-        return None
+    # Determine mode: T2A (text-only) or V2A (video-to-audio)
+    is_t2a_mode = video_path is None
+    
+    # T2A mode validation
+    if is_t2a_mode:
+        if duration is None:
+            # Default duration for T2A: 8 seconds (standard from MMAudio demo.py)
+            duration = 8.0
+            if not quiet:
+                print(f"ℹ️  T2A mode: Using default duration of {duration}s")
+        
+        if duration < 4 or duration > 12:
+            if not quiet:
+                print(f"❌ Invalid duration for T2A: {duration}s (must be 1-30s)")
+            return None
+    else:
+        # V2A mode validation
+        if not os.path.exists(video_path):
+            if not quiet:
+                print(f"❌ Video file not found: {video_path}")
+            return None
     
     if not quiet:
         print(f"\n🚀 Sending request to API...")
-        print(f"   Video: {Path(video_path).name}")
+        if is_t2a_mode:
+            print(f"   Mode: T2A (Text-to-Audio)")
+            print(f"   Duration: {duration}s")
+        else:
+            print(f"   Mode: V2A (Video-to-Audio)")
+            print(f"   Video: {Path(video_path).name}")
+            print(f"   Duration: {'auto-detect' if duration is None else f'{duration}s'}")
         print(f"   Model: {model_name}")
-        print(f"   Duration: {'auto-detect' if duration is None else f'{duration}s'}")
         if verbose:
             print(f"   Prompt: '{prompt}'")
             print(f"   Negative Prompt: '{negative_prompt}'")
@@ -178,21 +209,32 @@ def generate_audio(
     
     headers = get_cf_headers()
     try:
-        with open(video_path, 'rb') as video_file:
-            files = {"video": (Path(video_path).name, video_file, "video/mp4")}
-            
-            if not quiet:
-                print("⏳ Processing... (this may take a minute)")
-            
-            url = api_url or get_api_url()
+        url = api_url or get_api_url()
+        
+        if not quiet:
+            print("⏳ Processing... (this may take a minute)")
+        
+        if is_t2a_mode:
+            # T2A mode: No file upload, just form data
             response = requests.post(
                 f"{url}/generate",
                 headers=headers,
-                files=files,
                 data=data,
                 timeout=timeout
             )
-            response.raise_for_status()
+        else:
+            # V2A mode: Upload video file
+            with open(video_path, 'rb') as video_file:
+                files = {"video": (Path(video_path).name, video_file, "video/mp4")}
+                response = requests.post(
+                    f"{url}/generate",
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=timeout
+                )
+        
+        response.raise_for_status()
         
         total_time = time.time() - start_time
         
@@ -201,6 +243,7 @@ def generate_audio(
         actual_duration = response.headers.get('X-Duration', 'unknown')
         used_seed = response.headers.get('X-Seed', seed)
         output_format_used = response.headers.get('X-Output-Format', output_format)
+        generation_mode = response.headers.get('X-Mode', 'V2A' if not is_t2a_mode else 'T2A')
         
         # Extract server-generated filename from Content-Disposition header
         # FastAPI FileResponse includes: Content-Disposition: attachment; filename="..."
@@ -215,9 +258,10 @@ def generate_audio(
         
         if not quiet:
             print(f"\n✅ Audio generated successfully!")
+            print(f"   Mode: {generation_mode}")
             print(f"   Total time: {total_time:.2f}s")
             print(f"   Generation time: {generation_time}s")
-            print(f"   Video duration: {actual_duration}s")
+            print(f"   Duration: {actual_duration}s")
             print(f"   Seed used: {used_seed}")
             print(f"   Format: {output_format_used}")
             if server_filename:
