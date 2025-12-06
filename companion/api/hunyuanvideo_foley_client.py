@@ -20,15 +20,17 @@ from .config import (
     HYVF_DEFAULT_CFG_STRENGTH,
     DEFAULT_OUTPUT_FORMAT,
     DEFAULT_TIMEOUT,
+    get_cf_headers,
+    get_api_url,
 )
 
 
-def check_api_health(api_url: str = HYVF_DEFAULT_API_URL, quiet: bool = False) -> bool:
+def check_api_health(api_url: str = None, quiet: bool = False) -> bool:
     """
     Check if the HunyuanVideo-Foley API server is reachable.
     
     Args:
-        api_url (str): API server URL (default: http://localhost:8001)
+        api_url (str): API server URL (default: from config.json)
         quiet (bool): Suppress error messages
     
     Returns:
@@ -39,7 +41,8 @@ def check_api_health(api_url: str = HYVF_DEFAULT_API_URL, quiet: bool = False) -
         >>>     print("HunyuanVideo-Foley API is online!")
     """
     try:
-        response = requests.get(f"{api_url}/", timeout=10)
+        url = api_url or get_api_url("hunyuan")
+        response = requests.get(f"{url}/", timeout=10, headers=get_cf_headers())
         response.raise_for_status()
         return True
     except requests.exceptions.RequestException as e:
@@ -48,12 +51,12 @@ def check_api_health(api_url: str = HYVF_DEFAULT_API_URL, quiet: bool = False) -
         return False
 
 
-def get_available_models(api_url: str = HYVF_DEFAULT_API_URL, quiet: bool = False) -> Optional[dict]:
+def get_available_models(api_url: str = None, quiet: bool = False) -> Optional[dict]:
     """
     Get available models from the HunyuanVideo-Foley API.
     
     Args:
-        api_url (str): API server URL
+        api_url (str): API server URL (default: from config.json)
         quiet (bool): Suppress error messages
     
     Returns:
@@ -66,7 +69,8 @@ def get_available_models(api_url: str = HYVF_DEFAULT_API_URL, quiet: bool = Fals
         >>>     print(f"Loaded: {models['loaded_models']}")
     """
     try:
-        response = requests.get(f"{api_url}/models", timeout=10)
+        url = api_url or get_api_url("hunyuan")
+        response = requests.get(f"{url}/models", timeout=10, headers=get_cf_headers())
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -175,12 +179,32 @@ def generate_audio(
             if not quiet:
                 print("⏳ Processing... (this may take a minute)")
             
+            # Debug: Print CF-Access headers
+            cf_headers = get_cf_headers()
+            if cf_headers:
+                print(f"=== DEBUG: Sending CF-Access headers to {api_url}/generate ===")
+                for key in cf_headers:
+                    value = cf_headers[key]
+                    if 'Secret' in key:
+                        value = value[:10] + "..."
+                    print(f"  {key}: {value}")
+            
             response = requests.post(
                 f"{api_url}/generate",
                 files=files,
                 data=data,
-                timeout=timeout
+                timeout=timeout,
+                headers=cf_headers
             )
+            
+            # Debug: Check if we got HTML instead of audio
+            content_type = response.headers.get('Content-Type', '')
+            if 'html' in content_type.lower():
+                print(f"=== ERROR: Received HTML instead of audio! ===")
+                print(f"  Status Code: {response.status_code}")
+                print(f"  Content-Type: {content_type}")
+                print(f"  Content preview: {response.text[:500]}")
+            
             response.raise_for_status()
         
         total_time = time.time() - start_time
