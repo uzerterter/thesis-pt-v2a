@@ -992,47 +992,47 @@ async def generate_audio(
             # Frame check: disabled by default. Set VIDEO_FRAME_CHECK=1/true/yes/on to enable quick first-frame decode.
             
             validation_start = time.time()
-        try:
-            metadata_start = time.time()
-            with av.open(tmp_video_path) as container:
-                if not container.streams.video:
-                    raise HTTPException(status_code=400, detail="Video file has no video stream")
-                stream = container.streams.video[0]
-                # Prefer stream.duration if available
-                try:
-                    duration_actual = float(stream.duration * stream.time_base)
-                except Exception:
-                    # Fallback to container duration in seconds
-                    duration_actual = float(container.duration / av.time_base) if getattr(container, 'duration', None) else 0.0
+            try:
+                metadata_start = time.time()
+                with av.open(tmp_video_path) as container:
+                    if not container.streams.video:
+                        raise HTTPException(status_code=400, detail="Video file has no video stream")
+                    stream = container.streams.video[0]
+                    # Prefer stream.duration if available
+                    try:
+                        duration_actual = float(stream.duration * stream.time_base)
+                    except Exception:
+                        # Fallback to container duration in seconds
+                        duration_actual = float(container.duration / av.time_base) if getattr(container, 'duration', None) else 0.0
 
-                metadata_time = time.time() - metadata_start
-                logger.info(f"📊 Metadata check: {metadata_time*1000:.1f}ms | Video duration: {duration_actual:.2f}s")
+                    metadata_time = time.time() - metadata_start
+                    logger.info(f"📊 Metadata check: {metadata_time*1000:.1f}ms | Video duration: {duration_actual:.2f}s")
 
-                # Quick decode check (first frame) if enabled
-                if VIDEO_FRAME_CHECK:
-                    frame_check_start = time.time()
-                    frame_found = False
-                    # Demux + decode until first frame or until a small number of packets checked
-                    for packet in container.demux(stream):
-                        for frame in packet.decode():
-                            frame_found = True
-                            break
-                        if frame_found:
-                            break
-                    frame_check_time = time.time() - frame_check_start
-                    
-                    if not frame_found:
-                        raise HTTPException(status_code=400, detail=f"Video appears to have no decodable frames (duration: {duration_actual:.2f}s)")
-                    
-                    logger.info(f"✅ Frame decode check: {frame_check_time*1000:.1f}ms | First frame decoded successfully")
+                    # Quick decode check (first frame) if enabled
+                    if VIDEO_FRAME_CHECK:
+                        frame_check_start = time.time()
+                        frame_found = False
+                        # Demux + decode until first frame or until a small number of packets checked
+                        for packet in container.demux(stream):
+                            for frame in packet.decode():
+                                frame_found = True
+                                break
+                            if frame_found:
+                                break
+                        frame_check_time = time.time() - frame_check_start
+                        
+                        if not frame_found:
+                            raise HTTPException(status_code=400, detail=f"Video appears to have no decodable frames (duration: {duration_actual:.2f}s)")
+                        
+                        logger.info(f"✅ Frame decode check: {frame_check_time*1000:.1f}ms | First frame decoded successfully")
 
-        except HTTPException:
-            # Re-raise FastAPI HTTPExceptions
-            raise
-        except Exception as e:
-            logger.error(f"Error while inspecting uploaded video: {e}")
-            raise HTTPException(status_code=400, detail=f"Failed to read video metadata: {e}")
-        
+            except HTTPException:
+                # Re-raise FastAPI HTTPExceptions
+                raise
+            except Exception as e:
+                logger.error(f"Error while inspecting uploaded video: {e}")
+                raise HTTPException(status_code=400, detail=f"Failed to read video metadata: {e}")
+            
             validation_total_time = time.time() - validation_start
             logger.info(f"⏱️  Total validation time: {validation_total_time*1000:.1f}ms")
 
