@@ -933,7 +933,7 @@ def cleanup_file_after_delay(file_path: Path, delay_minutes: int = 5):
 @app.post("/generate")
 async def generate_audio(
     background_tasks: BackgroundTasks,
-    video: UploadFile = File(...),
+    video: Optional[UploadFile] = File(None),  # Optional for T2A mode
     prompt: str = Form(""),
     negative_prompt: str = Form(""),
     seed: int = Form(42),
@@ -945,23 +945,53 @@ async def generate_audio(
     full_precision: bool = Form(False)  # NEW: Use float32 instead of bfloat16
 ):
     """
-    Generate audio from video, returns audio file in requested format.
+    Generate audio from video (V2A) or text only (T2A).
     
     Args:
+        video: Video file (optional). If None, uses T2A mode (text-to-audio)
+        duration: Duration in seconds (required for T2A, auto-detected for V2A)
         output_format: "flac" (default, lossless compression) or "wav" (uncompressed PCM)
                       Use "wav" for Pro Tools PTSL compatibility (avoids client-side conversion)
         full_precision: Use torch.float32 (high quality, slower) instead of torch.bfloat16 (default, faster)
     """
     try:
-        # Save uploaded video to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
-            content = await video.read()
-            tmp_file.write(content)
-            tmp_video_path = Path(tmp_file.name)
+        # Determine mode: T2A (text-only) or V2A (video-to-audio)
+        is_t2a_mode = video is None
         
-        # Frame check: disabled by default. Set VIDEO_FRAME_CHECK=1/true/yes/on to enable quick first-frame decode.
-        
-        validation_start = time.time()
+        if is_t2a_mode:
+            # ========== T2A MODE: Text-to-Audio (no video input) ==========
+            logger.info("🎵 T2A MODE: Text-to-audio generation (no video)")
+            
+            # Duration is REQUIRED for T2A mode
+            if duration is None:
+                raise HTTPException(status_code=400, detail="duration is required for T2A mode (text-only generation). Specify duration in seconds (e.g., 8.0)")
+            
+            # Validate duration limits for T2A
+            if duration < 4:
+                raise HTTPException(status_code=400, detail=f"Duration too short: {duration:.2f}s (minimum 4s for T2A)")
+            if duration > 12:
+                raise HTTPException(status_code=400, detail=f"Duration too long: {duration:.2f}s (maximum 12s for T2A)")
+            
+            logger.info(f"T2A parameters: duration={duration:.2f}s, prompt='{prompt}', seed={seed}")
+            
+            # T2A: No video processing needed
+            clip_frames = None
+            sync_frames = None
+            tmp_video_path = None
+            
+        else:
+            # ========== V2A MODE: Video-to-Audio (with video input) ==========
+            logger.info("🎬 V2A MODE: Video-to-audio generation")
+            
+            # Save uploaded video to temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
+                content = await video.read()
+                tmp_file.write(content)
+                tmp_video_path = Path(tmp_file.name)
+            
+            # Frame check: disabled by default. Set VIDEO_FRAME_CHECK=1/true/yes/on to enable quick first-frame decode.
+            
+            validation_start = time.time()
         try:
             metadata_start = time.time()
             with av.open(tmp_video_path) as container:
@@ -1003,21 +1033,35 @@ async def generate_audio(
             logger.error(f"Error while inspecting uploaded video: {e}")
             raise HTTPException(status_code=400, detail=f"Failed to read video metadata: {e}")
         
-        validation_total_time = time.time() - validation_start
-        logger.info(f"⏱️  Total validation time: {validation_total_time*1000:.1f}ms")
+            validation_total_time = time.time() - validation_start
+            logger.info(f"⏱️  Total validation time: {validation_total_time*1000:.1f}ms")
 
-        # If client provided a duration, warn if it differs significantly and prefer the actual
-        if duration is not None:
-            if abs(duration - duration_actual) > 0.5:
-                logger.warning(f"Client-supplied duration ({duration:.2f}s) differs from file ({duration_actual:.2f}s); using file value")
-        duration = duration_actual
+            # If client provided a duration, warn if it differs significantly and prefer the actual
+            if duration is not None:
+                if abs(duration - duration_actual) > 0.5:
+                    logger.warning(f"Client-supplied duration ({duration:.2f}s) differs from file ({duration_actual:.2f}s); using file value")
+            duration = duration_actual
 
-        # Validate duration limits (use file-derived duration)
-        if duration < 3:
-            raise HTTPException(status_code=400, detail=f"Video too short: {duration:.2f}s (minimum 3s)")
-        if duration > 14:
-            raise HTTPException(status_code=400, detail=f"Video too long: {duration:.2f}s (maximum 14s)")
-
+            # Validate duration limits (use file-derived duration)
+            if duration < 4:
+                raise HTTPException(status_code=400, detail=f"Video too short: {duration:.2f}s (minimum 4s)")
+            if duration > 12:
+                raise HTTPException(status_code=400, detail=f"Video too long: {duration:.2f}s (maximum 12s)")
+            
+            # Load and process video using MMAudio's native function
+            video_info = load_video_optimized(tmp_video_path, duration)
+            
+            # Exact logic from demo.py for video processing
+            clip_frames = video_info.clip_frames
+            sync_frames = video_info.sync_frames
+            duration = video_info.duration_sec
+            
+            # Apply demo.py logic: unsqueeze for batch dimension
+            clip_frames = clip_frames.unsqueeze(0)
+            sync_frames = sync_frames.unsqueeze(0)
+        
+        # ========== COMMON: Model loading and generation setup ==========
+        
         # Determine target dtype for this request
         target_dtype = torch.float32 if full_precision else dtype  # dtype = bfloat16 (global)
         
@@ -1030,21 +1074,9 @@ async def generate_audio(
         # This ensures weights are loaded in the correct precision
         net, feature_utils, seq_cfg = get_cached_model(model_name, target_dtype=target_dtype)
         
-        # Load and process video using MMAudio's native function
-        video_info = load_video_optimized(tmp_video_path, duration)
-        
-        # Exact logic from demo.py for video processing
-        clip_frames = video_info.clip_frames
-        sync_frames = video_info.sync_frames
-        duration = video_info.duration_sec
-        
-        # Apply demo.py logic: unsqueeze for batch dimension
-        clip_frames = clip_frames.unsqueeze(0)
-        sync_frames = sync_frames.unsqueeze(0)
-        
-        # CRITICAL: Convert video tensors to target dtype
+        # CRITICAL: Convert video tensors to target dtype (only for V2A mode)
         # Cached video_info is in bfloat16, but we need float32 for full precision
-        if clip_frames.dtype != target_dtype:
+        if not is_t2a_mode and clip_frames.dtype != target_dtype:
             logger.info(f"Converting video tensors from {clip_frames.dtype} to {target_dtype}...")
             clip_frames = clip_frames.to(target_dtype)
             sync_frames = sync_frames.to(target_dtype)
@@ -1182,8 +1214,9 @@ async def generate_audio(
             
             cleanup_file_after_delay(flac_path, delay_minutes=5)
 
-        # Clean up temporary video file
-        tmp_video_path.unlink()
+        # Clean up temporary video file (only in V2A mode)
+        if tmp_video_path is not None:
+            tmp_video_path.unlink()
         
         return FileResponse(
             final_path,
@@ -1192,10 +1225,11 @@ async def generate_audio(
             headers={
                 "Content-Disposition": f'attachment; filename="{final_filename}"',
                 "X-Generation-Time": str(generation_time),
-                "X-Duration": str(video_info.duration_sec),
+                "X-Duration": str(duration),  # Works for both T2A and V2A
                 "X-Seed": str(seed),
                 "X-Sample-Rate": str(target_sample_rate),
-                "X-Output-Format": output_format
+                "X-Output-Format": output_format,
+                "X-Mode": "T2A" if is_t2a_mode else "V2A"
             }
         )
         
