@@ -632,6 +632,134 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
 }
 
 //==============================================================================
+// T2A Audio Generation (text-only, no video)
+//==============================================================================
+
+juce::String PtV2AProcessor::generateAudioTextOnly (
+    const juce::String& prompt,
+    float duration,
+    const juce::String& negativePrompt,
+    int seed,
+    const juce::String& modelSize,
+    juce::String* errorMessage)
+{
+    juce::Logger::writeToLog ("=== T2A Generation Started (text-only) ===");
+    juce::Logger::writeToLog ("Model: MMAudio / " + modelSize);
+    juce::Logger::writeToLog ("Duration: " + juce::String (duration, 1) + "s");
+    juce::Logger::writeToLog ("Prompt: " + prompt);
+    juce::Logger::writeToLog ("Negative Prompt: " + negativePrompt);
+    juce::Logger::writeToLog ("Seed: " + juce::String (seed));
+    
+    // Validate inputs
+    if (duration < 4.0f || duration > 12.0f)
+    {
+        juce::String error = "T2A duration must be 4-12 seconds, got: " + juce::String (duration, 1) + "s";
+        juce::Logger::writeToLog ("ERROR: " + error);
+        if (errorMessage != nullptr)
+            *errorMessage = error;
+        return {};
+    }
+    
+    // Get Python executable and script
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();  // Uses standalone_api_client.py (supports T2A)
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::String error = "API client script not found: " + scriptFile.getFullPathName();
+        juce::Logger::writeToLog ("ERROR: " + error);
+        if (errorMessage != nullptr)
+            *errorMessage = error;
+        return {};
+    }
+    
+    juce::File scriptDir = scriptFile.getParentDirectory();
+    juce::Logger::writeToLog ("Script directory: " + scriptDir.getFullPathName());
+    
+    // Build command line arguments (NO --video parameter for T2A)
+    juce::StringArray commandArray;
+    
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");
+    commandArray.add (scriptFile.getFullPathName());
+    
+    // T2A mode: NO --video parameter, but ADD --duration
+    commandArray.add ("--duration");
+    commandArray.add (juce::String (duration, 1));
+    
+    if (prompt.isNotEmpty())
+    {
+        commandArray.add ("--prompt");
+        commandArray.add (prompt);
+    }
+    
+    if (negativePrompt.isNotEmpty())
+    {
+        commandArray.add ("--negative-prompt");
+        commandArray.add (negativePrompt);
+    }
+    
+    commandArray.add ("--seed");
+    commandArray.add (juce::String (seed));
+    
+    // MMAudio model argument
+    juce::String modelArg;
+    if (modelSize.contains ("Large"))
+        modelArg = "large_44k_v2";
+    else if (modelSize.contains ("Medium"))
+        modelArg = "medium_44k";
+    else if (modelSize.contains ("Small"))
+        modelArg = "small_16k";
+    else
+        modelArg = "large_44k_v2";  // Default
+    
+    commandArray.add ("--model");
+    commandArray.add (modelArg);
+    juce::Logger::writeToLog ("MMAudio model: " + modelArg);
+    
+    // Output settings
+    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    auto outputsDir = tempDir.getChildFile ("pt_v2a_outputs");
+    outputsDir.createDirectory();
+    
+    commandArray.add ("--output-format");
+    commandArray.add ("wav");
+    
+    commandArray.add ("--temp");  // Use temp directory
+    
+    commandArray.add ("--verbose");  // Enable verbose output for debugging
+    
+    juce::Logger::writeToLog ("Starting T2A audio generation (background process)...");
+    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
+    juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
+    
+    // Start background process
+    auto* backgroundProcess = new juce::ChildProcess();
+    
+    if (!backgroundProcess->start (commandArray))
+    {
+        delete backgroundProcess;
+        juce::String error = "Failed to start Python process for T2A generation";
+        juce::Logger::writeToLog ("ERROR: " + error);
+        if (errorMessage != nullptr)
+            *errorMessage = error;
+        return {};
+    }
+    
+    juce::Logger::writeToLog ("✓ T2A process started successfully");
+    
+    // Intentionally leak process (runs independently)
+    // Editor will poll for output file
+    
+    if (errorMessage != nullptr)
+        *errorMessage = "";
+    
+    // Return output directory path
+    return outputsDir.getFullPathName();
+}
+
+//==============================================================================
 // Logging Implementation
 //==============================================================================
 

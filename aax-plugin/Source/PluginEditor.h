@@ -171,7 +171,12 @@ private:
      */
     juce::TextEditor seedInput;
     juce::Label seedLabel { {}, "Seed:" };
-    
+
+    // Choice between V2A and T2A generation modes:
+    juce::ToggleButton v2aModeButton { "V2A (from Video)" };
+    juce::ToggleButton t2aModeButton { "T2A (Text Only)" };
+    juce::Label durationLabel { {}, "Duration:" };
+    juce::ComboBox durationComboBox;       
     /**
      * High precision mode toggle (deprecated TODO remove in future)
      * 
@@ -258,6 +263,26 @@ private:
      */
     void handleModelProviderChange();
     
+    /**
+     * Handle generation mode change (V2A <-> T2A)
+     * Updates UI state: enables/disables duration selection and model provider
+     */
+    void handleGenerationModeChange();
+    
+    /**
+     * Handle T2A render button click - text-to-audio workflow without video
+     * 
+     * Steps:
+     *   1. Parse duration from dropdown (e.g., "8s" -> 8.0f)
+     *   2. Check API availability
+     *   3. Read timeline selection from Pro Tools
+     *   4. Generate audio via T2A API (no video input)
+     *   5. Import generated audio at timeline selection start
+     * 
+     * @note Now uses timeline selection like V2A for consistent behavior
+     */
+    void handleT2ARenderButtonClicked();
+    
     //==============================================================================
     // Async PTSL Communication
     //==============================================================================
@@ -276,10 +301,16 @@ private:
     void timerCallback() override;
     
     /**
-     * Start async timeline selection read
-     * Launches PTSL process and starts timer for polling
+     * Start async timeline selection read (V2A workflow - includes video clip check)
+     * Launches PTSL process with get_video_info and starts timer for polling
      */
     void startTimelineSelectionRead();
+    
+    /**
+     * Start async timeline selection read (T2A workflow - timeline only, no video)
+     * Launches PTSL process with get_timeline_selection and starts timer for polling
+     */
+    void startTimelineSelectionReadOnly();
     
     /**
      * Handle timeline selection result (called from timer callback)
@@ -288,12 +319,20 @@ private:
     void handleTimelineSelectionResult (const juce::String& output);
     
     /**
-     * Start async audio generation and polling
+     * Start async audio generation and polling (V2A workflow)
      * Launches Python process and starts timer to poll for output file
      * @param videoPath Path to video file
      * @param promptText User's audio prompt
      */
     void startAudioGeneration (const juce::String& videoPath, const juce::String& promptText);
+    
+    /**
+     * Start async T2A audio generation (text-only, no video)
+     * Launches Python process and starts timer to poll for output file
+     * @param promptText User's audio prompt
+     * @param duration Duration in seconds (4-12s)
+     */
+    void startT2AAudioGeneration (const juce::String& promptText, float duration);
     
     /**
      * Check if audio generation is complete (output file exists)
@@ -381,11 +420,17 @@ private:
     /** Flag indicating if video clip is trimmed (shorter than source) */
     bool clipIsTrimmed = false;
     
+    /** Current generation mode: true = T2A (text-only), false = V2A (video-to-audio) */
+    bool isT2AMode = false;
+    
+    /** T2A duration selected by user (4-12s) */
+    float t2aDuration = 8.0f;
+    
     /** Timeout for PTSL calls (milliseconds) */
     static constexpr int PTSL_TIMEOUT_MS = 10000;  // 10 seconds
     
     /** Timeout for audio generation (milliseconds) */
-    static constexpr int GENERATION_TIMEOUT_MS = 180000;  // 3 minutes
+    static constexpr int GENERATION_TIMEOUT_MS = 120000;  // 2 minutes
     
     /** Timer polling interval (milliseconds) */
     static constexpr int TIMER_INTERVAL_MS = 100;  // Check every 100ms

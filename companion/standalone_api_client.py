@@ -726,13 +726,16 @@ def main():
     # Standard Generation Mode (action == 'generate')
     # =============================================================================
     
-    is_cli_mode = args.video is not None
+    # CLI mode if video OR duration is provided (V2A or T2A)
+    is_cli_mode = args.video is not None or args.duration is not None
+    is_t2a_mode = args.video is None and args.duration is not None
     
     if not quiet:
         print("🌐 MMAudio Standalone API Client")
         print("=" * 50)
         if is_cli_mode:
-            print("📋 CLI Mode (Pro Tools Ready)")
+            mode_str = "T2A (Text-Only)" if is_t2a_mode else "V2A (Video-to-Audio)"
+            print(f"📋 CLI Mode ({mode_str})")
         else:
             print("🎮 Interactive Mode")
         print()
@@ -740,26 +743,32 @@ def main():
     try:
         # === CLI MODE ===
         if is_cli_mode:
-            # Validate video file
-            try:
-                video_path_obj = validate_video_file(args.video)
-                video_path = str(video_path_obj)
+            # Validate video file (skip for T2A mode)
+            if not is_t2a_mode:
+                try:
+                    video_path_obj = validate_video_file(args.video)
+                    video_path = str(video_path_obj)
+                    
+                except (FileNotFoundError, ValueError) as e:
+                    error_msg = f"Video validation failed: {e}"
+                    if not quiet:
+                        print(f"❌ {error_msg}")
+                    print(f"ERROR: {error_msg}", file=sys.stderr)
+                    return 1
                 
-            except (FileNotFoundError, ValueError) as e:
-                error_msg = f"Video validation failed: {e}"
-                if not quiet:
-                    print(f"❌ {error_msg}")
-                print(f"ERROR: {error_msg}", file=sys.stderr)
-                return 1
+                if verbose and not quiet:
+                    file_size_mb = video_path_obj.stat().st_size / (1024 * 1024)
+                    print(f"📹 Video: {video_path_obj.name} ({file_size_mb:.1f} MB)")
+            else:
+                # T2A mode: no video
+                video_path = None
+                if verbose and not quiet:
+                    print(f"🎵 T2A Mode: Duration = {args.duration}s")
             
             # Use CLI parameters
             prompt = args.prompt
             negative_prompt = args.negative_prompt  
             seed = args.seed
-            
-            if verbose and not quiet:
-                file_size_mb = video_path_obj.stat().st_size / (1024 * 1024)
-                print(f"📹 Video: {video_path_obj.name} ({file_size_mb:.1f} MB)")
         
         # === INTERACTIVE MODE ===
         else:
@@ -811,6 +820,7 @@ def main():
         # === Video Preprocessing (Downscaling) ===
         # Check if video needs downscaling BEFORE workflow processing
         # This handles untrimmed videos (trimmed videos are checked after trimming)
+        # Skip for T2A mode (no video)
         will_be_trimmed = (
             (args.video_offset and args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
             (args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
@@ -818,8 +828,8 @@ def main():
             (args.video_offset and args.timeline_start != 0.0 and args.timeline_end != 0.0)
         )
         
-        if not will_be_trimmed:
-            # Video won't be trimmed, check if downscaling needed now
+        if not is_t2a_mode and not will_be_trimmed:
+            # Video won't be trimmed, check if downscaling needed now (V2A only)
             file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
             log_debug(f"=== DEBUG: Untrimmed video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
             

@@ -62,6 +62,33 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     seedInput.setText ("42");  // Set default value
     addAndMakeVisible (seedInput);
     
+    // Configure generation mode radio buttons (V2A vs T2A)
+    v2aModeButton.setRadioGroupId (1001);
+    v2aModeButton.setToggleState (true, juce::dontSendNotification);  // Default: V2A mode
+    v2aModeButton.onClick = [this] { handleGenerationModeChange(); };
+    addAndMakeVisible (v2aModeButton);
+    
+    t2aModeButton.setRadioGroupId (1001);
+    t2aModeButton.onClick = [this] { handleGenerationModeChange(); };
+    addAndMakeVisible (t2aModeButton);
+    
+    // Configure duration dropdown (for T2A mode)
+    durationLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (durationLabel);
+    
+    durationComboBox.addItem ("4s", 1);
+    durationComboBox.addItem ("5s", 2);
+    durationComboBox.addItem ("6s", 3);
+    durationComboBox.addItem ("7s", 4);
+    durationComboBox.addItem ("8s", 5);
+    durationComboBox.addItem ("9s", 6);
+    durationComboBox.addItem ("10s", 7);
+    durationComboBox.addItem ("11s", 8);
+    durationComboBox.addItem ("12s", 9);
+    durationComboBox.setSelectedId (5, juce::dontSendNotification);  // Default: 8s
+    durationComboBox.setEnabled (false);  // Initially disabled (V2A mode)
+    addAndMakeVisible (durationComboBox);
+    
     // Configure high precision mode toggle (deprecated TODO remove in future)
     // highPrecisionModeToggle.setToggleState (false, juce::dontSendNotification);  // Default: off (bfloat16)
     // addAndMakeVisible (highPrecisionModeToggle);
@@ -101,6 +128,28 @@ void PtV2AEditor::handleRenderButtonClicked()
 {
     juce::Logger::writeToLog ("=== Render Button Clicked ===");
     juce::Logger::writeToLog ("Prompt: " + prompt.getText());
+    juce::Logger::writeToLog ("Mode: " + juce::String (isT2AMode ? "T2A" : "V2A"));
+    
+    // T2A mode validation and workflow
+    if (isT2AMode)
+    {
+        // Validate model selection
+        if (modelProviderComboBox.getSelectedId() != 1)  // Not MMAudio
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "Invalid Model Selection",
+                "T2A mode only supports MMAudio.\n\n"
+                "HunyuanVideo-Foley requires video input (V2A mode).",
+                "OK"
+            );
+            return;
+        }
+        
+        // Start T2A workflow (text-to-audio without video)
+        handleT2ARenderButtonClicked();
+        return;
+    }
     
     // Disable button during processing
     renderButton.setEnabled (false);
@@ -185,6 +234,49 @@ void PtV2AEditor::handleOpenLogButtonClicked()
 }
 
 //==============================================================================
+// Event Handler - T2A Render Button Click
+//==============================================================================
+void PtV2AEditor::handleT2ARenderButtonClicked()
+{
+    juce::Logger::writeToLog ("=== T2A Render Button Clicked ===");
+    
+    // Parse duration from dropdown (e.g., "8s" -> 8.0f)
+    juce::String durationText = durationComboBox.getText();
+    float duration = durationText.dropLastCharacters(1).getFloatValue();  // Remove "s" suffix
+    
+    juce::Logger::writeToLog ("T2A Duration: " + juce::String(duration, 1) + "s");
+    
+    // Store duration for later use
+    t2aDuration = duration;
+    
+    // Disable button during operation
+    renderButton.setEnabled (false);
+    renderButton.setButtonText ("Checking API...");
+    
+    // Check MMAudio API availability (T2A only supports MMAudio)
+    juce::String apiUrl = processor.getConfiguredAPIUrl ("mmaudio");
+    if (!processor.isAPIAvailable (apiUrl))
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "API Not Available",
+            "MMAudio API is not running!\n\n"
+            "Please start the API server\n"
+            "Trying to connect to: " + apiUrl,
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        return;
+    }
+    
+    // Start async timeline-only read (T2A doesn't need video clips)
+    renderButton.setButtonText ("Reading Selection...");
+    startTimelineSelectionReadOnly();
+}
+
+//==============================================================================
 // JUCE Component Lifecycle - Paint
 //==============================================================================
 void PtV2AEditor::paint (juce::Graphics& g)
@@ -219,11 +311,23 @@ void PtV2AEditor::resized()
     // 20px spacing before next row
     r.removeFromTop (20);
     
-    // Seed and precision row: Label + Input + Toggle
+    // Seed and generation mode row: Label + Input + Radio Buttons + Duration
     auto seedRow = r.removeFromTop (28);
     seedLabel.setBounds (seedRow.removeFromLeft (65));
     seedRow.removeFromLeft (10);
     seedInput.setBounds (seedRow.removeFromLeft (120));
+    seedRow.removeFromLeft (20);
+    
+    // Radio buttons for V2A/T2A mode
+    v2aModeButton.setBounds (seedRow.removeFromLeft (140));
+    seedRow.removeFromLeft (10);
+    t2aModeButton.setBounds (seedRow.removeFromLeft (130));
+    seedRow.removeFromLeft (20);
+    
+    // Duration controls (only active in T2A mode)
+    durationLabel.setBounds (seedRow.removeFromLeft (70));
+    seedRow.removeFromLeft (5);
+    durationComboBox.setBounds (seedRow.removeFromLeft (80));
     
     // 20px spacing before model selection
     r.removeFromTop (20);
@@ -350,6 +454,82 @@ void PtV2AEditor::startTimelineSelectionRead()
     juce::Logger::writeToLog ("Timeline selection started, timer polling every " + 
                               juce::String (TIMER_INTERVAL_MS) + "ms");
 }
+
+//==============================================================================
+// Async PTSL - Timeline Selection Read Only (T2A workflow - no video required)
+//==============================================================================
+
+void PtV2AEditor::startTimelineSelectionReadOnly()
+{
+    juce::Logger::writeToLog ("=== Starting Async Timeline Selection Read (T2A - No Video) ===");
+    
+    auto pythonExe = processor.getPythonExecutable();
+    auto scriptFile = processor.getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: API client script not found");
+        
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Script Error",
+            "API client script not found.\n\n"
+            "Please check plugin installation.",
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        return;
+    }
+    
+    // Build command: Use get_timeline_selection (no video clip check)
+    juce::StringArray commandArray;
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");
+    commandArray.add (scriptFile.getFullPathName());
+    commandArray.add ("--action");
+    commandArray.add ("get_video_selection");  // T2A: timeline only, no video file lookup
+    
+    juce::Logger::writeToLog ("Starting PTSL process (async)...");
+    juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
+    
+    // Create and start process
+    ptslProcess = std::make_unique<juce::ChildProcess>();
+    
+    if (!ptslProcess->start (commandArray))
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start PTSL process");
+        
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Process Error",
+            "Failed to start Python process for timeline selection.\n\n"
+            "Please check plugin installation.",
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        ptslProcess.reset();
+        return;
+    }
+    
+    // Record start time for timeout detection
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    currentAsyncState = AsyncState::ReadingTimeline;
+    
+    // Start timer to poll process status every 100ms
+    startTimer (TIMER_INTERVAL_MS);
+    
+    juce::Logger::writeToLog ("Timeline selection started (T2A mode), timer polling every " + 
+                              juce::String (TIMER_INTERVAL_MS) + "ms");
+}
+
+//==============================================================================
+// Async PTSL - Cursor Position Read (T2A workflow)
+
 
 void PtV2AEditor::timerCallback()
 {
@@ -622,12 +802,34 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         juce::Logger::writeToLog ("Timeline selection SUCCESS: " + inTime + " - " + outTime);
         juce::Logger::writeToLog ("Duration: " + juce::String (durationSeconds, 2) + "s");
         
-        // Store timeline selection for audio import and video trimming
+        // Store timeline selection for audio import
         timelineInTime = inTime;
         timelineInSeconds = inSeconds;
         timelineOutSeconds = outSeconds;
         juce::Logger::writeToLog ("Stored timeline in-time: " + timelineInTime);
         juce::Logger::writeToLog ("Stored timeline in/out seconds: " + juce::String (inSeconds) + "s - " + juce::String (outSeconds) + "s");
+        
+        //======================================================================
+        // T2A MODE: Skip video processing, start generation directly
+        //======================================================================
+        if (isT2AMode)
+        {
+            juce::Logger::writeToLog ("=== T2A Mode: Starting text-only audio generation ===");
+            juce::Logger::writeToLog ("Duration: " + juce::String (t2aDuration, 1) + "s");
+            juce::Logger::writeToLog ("Import position: " + inTime + " (" + juce::String (inSeconds, 2) + "s)");
+            juce::Logger::writeToLog ("Prompt: " + prompt.getText());
+            
+            renderButton.setButtonText ("Generating Audio...");
+            
+            // Start T2A generation (no video processing needed)
+            startT2AAudioGeneration (prompt.getText(), t2aDuration);
+            return;  // Exit here - T2A workflow complete
+        }
+        
+        //======================================================================
+        // V2A MODE: Continue with video processing
+        //======================================================================
+        juce::Logger::writeToLog ("=== V2A Mode: Processing video clip ===");
         
         // Validate duration: 5-12 seconds
         if (durationSeconds < 5.0f)
@@ -840,6 +1042,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
     }
 }
 
+
+
 //==============================================================================
 // Async Audio Generation Implementation
 //==============================================================================
@@ -937,6 +1141,74 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     asyncOperationStartTime = juce::Time::getCurrentTime();
     
     // Timer is already running from previous state, just continue polling
+    if (!isTimerRunning())
+        startTimer (TIMER_INTERVAL_MS);
+}
+
+//==============================================================================
+// Async T2A Audio Generation (text-only, no video)
+//==============================================================================
+
+void PtV2AEditor::startT2AAudioGeneration (const juce::String& promptText, float duration)
+{
+    juce::Logger::writeToLog ("=== Starting T2A Audio Generation (text-only) ===");
+    juce::Logger::writeToLog ("Prompt: " + promptText);
+    juce::Logger::writeToLog ("Duration: " + juce::String (duration, 1) + "s");
+    
+    // Store parameters
+    currentPrompt = promptText;
+    
+    // Read advanced parameters from UI
+    juce::String negativePrompt = negativePromptInput.getText().trim();
+    if (negativePrompt.isEmpty())
+        negativePrompt = "voices, music";  // Default if empty
+    
+    juce::String seedText = seedInput.getText().trim();
+    int seed = seedText.isEmpty() ? 42 : seedText.getIntValue();
+    
+    // T2A only supports MMAudio
+    PtV2AProcessor::ModelProvider modelProvider = PtV2AProcessor::ModelProvider::MMAudio;
+    juce::String modelSize = modelSizeComboBox.getText();
+    
+    juce::Logger::writeToLog ("Model: MMAudio / " + modelSize);
+    juce::Logger::writeToLog ("Advanced params: negative_prompt=\"" + negativePrompt + "\", seed=" + juce::String(seed));
+    
+    // Call processor to start T2A generation (no video, just text + duration)
+    juce::String errorMessage;
+    expectedAudioOutputPath = processor.generateAudioTextOnly (
+        promptText,
+        duration,
+        negativePrompt,
+        seed,
+        modelSize,
+        &errorMessage
+    );
+    
+    if (expectedAudioOutputPath.isEmpty())
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start T2A generation: " + errorMessage);
+        
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Generation Failed",
+            "Failed to start T2A audio generation:\n\n" + errorMessage,
+            "OK"
+        );
+        
+        renderButton.setEnabled (true);
+        renderButton.setButtonText ("Render Audio");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    juce::Logger::writeToLog ("Expected T2A output: " + expectedAudioOutputPath);
+    juce::Logger::writeToLog ("Starting polling for output file...");
+    
+    // Switch to GeneratingAudio state (same polling as V2A)
+    currentAsyncState = AsyncState::GeneratingAudio;
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    
+    // Start timer to poll for output file
     if (!isTimerRunning())
         startTimer (TIMER_INTERVAL_MS);
 }
@@ -1310,12 +1582,18 @@ void PtV2AEditor::startAudioImport (const juce::String& audioPath)
     commandArray.add ("--audio-path");
     commandArray.add (audioPath);
     
-    // Add timecode position if available
-    if (timelineInTime.isNotEmpty())
+    // Add timecode position (same for both T2A and V2A - uses timeline selection start)
+    juce::String importTimecode = timelineInTime;
+    if (importTimecode.isNotEmpty())
+    {
+        juce::String modeLabel = isT2AMode ? "T2A" : "V2A";
+        juce::Logger::writeToLog ("Import position (" + modeLabel + "): " + importTimecode);
+    }
+    
+    if (importTimecode.isNotEmpty())
     {
         commandArray.add ("--timecode");
-        commandArray.add (timelineInTime);
-        juce::Logger::writeToLog ("Import position: " + timelineInTime);
+        commandArray.add (importTimecode);
     }
     else
     {
@@ -1400,6 +1678,44 @@ void PtV2AEditor::handleAudioImportResult (const juce::String& output)
     
     renderButton.setEnabled (true);
     renderButton.setButtonText ("Render Audio");
+}
+
+//==============================================================================
+// Generation Mode Change Handler (V2A <-> T2A)
+//==============================================================================
+void PtV2AEditor::handleGenerationModeChange()
+{
+    isT2AMode = t2aModeButton.getToggleState();
+    
+    juce::Logger::writeToLog ("=== Generation Mode Changed ===");
+    juce::Logger::writeToLog ("New mode: " + juce::String (isT2AMode ? "T2A (Text Only)" : "V2A (Video-to-Audio)"));
+    
+    // Duration controls: only enabled in T2A mode
+    durationComboBox.setEnabled (isT2AMode);
+    durationLabel.setEnabled (isT2AMode);
+    
+    // Model provider handling: HunyuanVideo-Foley not compatible with T2A
+    if (isT2AMode)
+    {
+        // If HunyuanVideo-Foley is selected, switch to MMAudio
+        if (modelProviderComboBox.getSelectedId() == 2)  // HunyuanVideo-Foley
+        {
+            juce::Logger::writeToLog ("T2A mode: Switching from HunyuanVideo-Foley to MMAudio");
+            modelProviderComboBox.setSelectedId (1, juce::sendNotification);  // Switch to MMAudio
+        }
+        
+        // T2A mode: Lock model provider to MMAudio only (disable dropdown)
+        modelProviderComboBox.setEnabled (false);
+        juce::Logger::writeToLog ("T2A mode: Model provider locked to MMAudio");
+    }
+    else
+    {
+        // V2A mode: Enable model provider dropdown for user selection
+        modelProviderComboBox.setEnabled (true);
+        juce::Logger::writeToLog ("V2A mode: Model provider dropdown enabled");
+    }
+    
+    repaint();
 }
 
 //==============================================================================

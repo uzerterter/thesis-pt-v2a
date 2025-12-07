@@ -202,6 +202,34 @@ public:
         juce::String* errorMessage = nullptr
     );
     
+    /**
+     * Generate audio from text prompt only (T2A mode) - no video input
+     * 
+     * T2A (Text-to-Audio) workflow:
+     * - Uses MMAudio model only (HunyuanVideo-Foley not supported)
+     * - Generates audio based on text prompt and specified duration
+     * - No video file required
+     * 
+     * @param prompt Text description of desired audio (e.g., "thunder and rain")
+     * @param duration Audio duration in seconds (4-12s supported)
+     * @param negativePrompt Negative prompt (things to avoid)
+     * @param seed Random seed for reproducibility
+     * @param modelSize MMAudio model size ("large_44k_v2", etc.)
+     * @param errorMessage Optional output parameter for error details
+     * 
+     * @return Path to generated audio file (WAV) on success, empty string on failure
+     * 
+     * @note Asynchronous operation - returns immediately, audio generation runs in subprocess
+     */
+    juce::String generateAudioTextOnly (
+        const juce::String& prompt,
+        float duration,
+        const juce::String& negativePrompt = DEFAULT_NEGATIVE_PROMPT,
+        int seed = DEFAULT_SEED,
+        const juce::String& modelSize = "large_44k_v2",
+        juce::String* errorMessage = nullptr
+    );
+    
     /** 
      * Get configured API URL from config.json
      * Reads companion/api/config.json and returns appropriate URL based on use_cloudflared setting
