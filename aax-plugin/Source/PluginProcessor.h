@@ -248,6 +248,46 @@ public:
      */
     bool isAPIAvailable (const juce::String& apiUrl = DEFAULT_API_URL);
     
+    //==============================================================================
+    // Cloudflare Access Credential Management
+    //==============================================================================
+    
+    /**
+     * Get Cloudflare Access Client ID from config.json
+     * @return Client ID string, or empty string if not configured
+     */
+    juce::String getCloudflareClientId();
+    
+    /**
+     * Get Cloudflare Access Client Secret from config.json
+     * @return Client Secret string, or empty string if not configured
+     */
+    juce::String getCloudflareClientSecret();
+    
+    /**
+     * Save Cloudflare Access credentials to config.json
+     * Updates existing config while preserving other settings
+     * 
+     * @param clientId CF-Access-Client-Id (Service Token identifier)
+     * @param clientSecret CF-Access-Client-Secret (Service Token secret)
+     * @return true if credentials saved successfully, false on file write error
+     */
+    bool saveCloudflareCredentials (const juce::String& clientId, 
+                                    const juce::String& clientSecret);
+    
+    /**
+     * Test Cloudflare Access credentials by connecting to API
+     * Calls Python subprocess to validate credentials
+     * 
+     * @param clientId CF-Access-Client-Id to test
+     * @param clientSecret CF-Access-Client-Secret to test
+     * @param errorMessage [OUT] Error details if test fails
+     * @return true if credentials are valid and API accessible
+     */
+    bool testCloudflareCredentials (const juce::String& clientId,
+                                    const juce::String& clientSecret,
+                                    juce::String* errorMessage = nullptr);
+    
     /** 
      * Get path to Python API client script (standalone_api_client.py)
      * Searches in following locations (in order):
@@ -445,6 +485,16 @@ private:
     //   - juce::String lastNegativePrompt;
     //   - int lastSeed;
     //   - juce::File lastVideoFile;
+    
+    //==============================================================================
+    // Private Helper Methods
+    //==============================================================================
+    
+    /**
+     * Get path to config.json file in plugin bundle
+     * @return File object pointing to config.json
+     */
+    juce::File getConfigFilePath();
     
     //==============================================================================
     // JUCE Leak Detector (Debug builds only)

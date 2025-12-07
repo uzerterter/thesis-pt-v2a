@@ -272,9 +272,22 @@ Examples:
     parser.add_argument(
         '--action',
         type=str,
-        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'trim_video', 'validate_duration', 'get_duration', 'import_audio', 'clip_detect_and_trim', 'get_clip_bounds'],
+        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'trim_video', 'validate_duration', 'get_duration', 'import_audio', 'clip_detect_and_trim', 'get_clip_bounds', 'test_cloudflare'],
         default='generate',
         help='Action to perform (default: generate)'
+    )
+    
+    # Cloudflare credential test parameters
+    parser.add_argument(
+        '--cf-client-id',
+        type=str,
+        help='Cloudflare Access Client ID (for test_cloudflare action)'
+    )
+    
+    parser.add_argument(
+        '--cf-client-secret',
+        type=str,
+        help='Cloudflare Access Client Secret (for test_cloudflare action)'
     )
     
     # Clip bounds parameters (for background trimming)
@@ -720,6 +733,106 @@ def main():
             }
             print(json.dumps(error_result))
             sys.stdout.flush()
+            sys.exit(1)
+    
+    elif args.action == 'test_cloudflare':
+        """Test Cloudflare Access credentials"""
+        log_debug(f"=== DEBUG: test_cloudflare action START ===")
+        
+        if not args.cf_client_id or not args.cf_client_secret:
+            error_result = {
+                'success': False,
+                'error': '--cf-client-id and --cf-client-secret required for test_cloudflare action'
+            }
+            log_debug(f"ERROR: {error_result['error']}")
+            print(json.dumps(error_result))
+            sys.exit(1)
+        
+        log_debug(f"Client ID: {args.cf_client_id}")
+        log_debug(f"Client Secret: {args.cf_client_secret[:10]}...")
+        
+        try:
+            import requests
+            # get_api_url already imported at top of file (line 52)
+            
+            # Get cloudflared URL (both services should work)
+            mmaudio_url = "https://mmaudio.linwig.de"
+            hyvf_url = "https://hyvf.linwig.de"
+            
+            log_debug(f"Testing MMAudio API: {mmaudio_url}")
+            
+            # Test connection with credentials
+            headers = {
+                "CF-Access-Client-Id": args.cf_client_id,
+                "CF-Access-Client-Secret": args.cf_client_secret
+            }
+            
+            log_debug(f"Sending request with CF-Access headers...")
+            response = requests.get(
+                f"{mmaudio_url}/",
+                headers=headers,
+                timeout=10
+            )
+            
+            log_debug(f"Response status: {response.status_code}")
+            log_debug(f"Response preview: {response.text[:200]}")
+            
+            if response.status_code == 200:
+                # Check if response is JSON (not HTML login page)
+                try:
+                    data = response.json()
+                    log_debug(f"Response is JSON: {data}")
+                    
+                    result = {
+                        'success': True,
+                        'message': 'Credentials are valid and API is accessible',
+                        'api_response': data
+                    }
+                    log_debug("✓ Credential test SUCCESS")
+                    print(json.dumps(result))
+                    sys.exit(0)
+                    
+                except ValueError:
+                    # Response is HTML, authentication failed
+                    error_msg = 'Received HTML instead of JSON. Credentials may be invalid or Access Policy misconfigured.'
+                    log_debug(f"ERROR: {error_msg}")
+                    result = {
+                        'success': False,
+                        'error': error_msg
+                    }
+                    print(json.dumps(result))
+                    sys.exit(1)
+            else:
+                error_msg = f'API returned status code {response.status_code}. Check Cloudflare Access configuration.'
+                log_debug(f"ERROR: {error_msg}")
+                result = {
+                    'success': False,
+                    'error': error_msg
+                }
+                print(json.dumps(result))
+                sys.exit(1)
+                
+        except requests.exceptions.RequestException as e:
+            error_msg = f'Connection failed: {str(e)}'
+            log_debug(f"ERROR: {error_msg}")
+            result = {
+                'success': False,
+                'error': error_msg
+            }
+            print(json.dumps(result))
+            sys.exit(1)
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            traceback_str = traceback.format_exc()
+            log_debug(f"ERROR: {error_msg}")
+            log_debug(f"Traceback:\n{traceback_str}")
+            
+            result = {
+                'success': False,
+                'error': error_msg
+            }
+            print(json.dumps(result))
             sys.exit(1)
     
     # =============================================================================

@@ -28,6 +28,20 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
         handleOpenLogButtonClicked();
     };
     addAndMakeVisible (openLogButton);
+
+    // Configure settings button with click handler
+    settingsButton.onClick = [this] { showCredentialDialog(); };
+        addAndMakeVisible (settingsButton);
+
+    // First-launch check: show dialog if credentials are missing
+    if (processor.getCloudflareClientSecret().isEmpty())
+    {
+    // Delay dialog to avoid showing during plugin initialization
+    juce::Timer::callAfterDelay (500, [this]
+    {
+        showCredentialDialog();
+    });
+}
     
     // Configure video offset label (deprecated TODO remove in future)
     // videoOffsetLabel.setJustificationType (juce::Justification::centredLeft);
@@ -379,6 +393,12 @@ void PtV2AEditor::resized()
     // renderDummyButton.setBounds (startX, y, dummyW, h); // (deprecated TODO remove in future)
     startX += dummyW + gap2;
     openLogButton.setBounds (startX, y, openLogW, h);
+
+    // Settings button at bottom-right
+    auto settingsRow = r.removeFromBottom (28);
+    r.removeFromBottom (10);  // Spacing
+    settingsRow.removeFromLeft (getWidth() - 200);  // Align right
+    settingsButton.setBounds (settingsRow.removeFromLeft (180));
 
 }
 
@@ -1748,4 +1768,111 @@ void PtV2AEditor::handleModelProviderChange()
         
         juce::Logger::writeToLog ("Model provider changed to: HunyuanVideo-Foley");
     }
+}
+
+//==============================================================================
+// Cloudflare Access Credential Dialog
+//==============================================================================
+void PtV2AEditor::showCredentialDialog()
+{
+    // Create AlertWindow on heap for async modal state
+    auto* credentialWindow = new juce::AlertWindow (
+        "API Access Credentials",
+        "Enter your Access Token Secret.\n\n"
+        "Do not change the Client ID unless advised.\n"
+        "You can test the API connection before saving.",
+        juce::MessageBoxIconType::NoIcon
+    );
+    
+    // Pre-fill with current values
+    auto currentId = processor.getCloudflareClientId();
+    auto currentSecret = processor.getCloudflareClientSecret();
+    
+    // Client ID: Read-only, pre-filled (user doesn't need to change this)
+    credentialWindow->addTextEditor ("clientId", currentId, "Client ID:");
+    if (auto* idEditor = credentialWindow->getTextEditor ("clientId"))
+    {
+        idEditor->setReadOnly (false);
+       // idEditor->setColour (juce::TextEditor::backgroundColourId, juce::Colours::lightgrey);
+    }
+    
+    // Client Secret: Editable, this is what user needs to input
+    credentialWindow->addTextEditor ("clientSecret", currentSecret, "Client Secret:");
+    
+    credentialWindow->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    credentialWindow->addButton ("Test Connection", 2);
+    credentialWindow->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    
+    // Use async modal state (non-blocking, Pro Tools safe!)
+    credentialWindow->enterModalState (true, juce::ModalCallbackFunction::create (
+        [this, credentialWindow] (int result)
+        {
+            if (result == 2)  // Test Connection
+            {
+                auto testId = credentialWindow->getTextEditorContents ("clientId");
+                auto testSecret = credentialWindow->getTextEditorContents ("clientSecret");
+                
+                renderButton.setButtonText ("Testing...");
+                renderButton.setEnabled (false);
+                
+                juce::String error;
+                bool valid = processor.testCloudflareCredentials (testId, testSecret, &error);
+                
+                renderButton.setButtonText ("Render Audio");
+                renderButton.setEnabled (true);
+                
+                if (valid)
+                {
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::InfoIcon,
+                        "Connection Successful",
+                        "Credentials are valid! Save them for API Access.",
+                        "OK"
+                    );
+                    
+                    // Show dialog again to let user save
+                    juce::Timer::callAfterDelay (100, [this] { showCredentialDialog(); });
+                }
+                else
+                {
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Connection Failed",
+                        "Could not connect to API:\n\n" + error,
+                        "OK"
+                    );
+                    
+                    // Show dialog again
+                    juce::Timer::callAfterDelay (100, [this] { showCredentialDialog(); });
+                }
+            }
+            else if (result == 1)  // Save
+            {
+                auto newId = credentialWindow->getTextEditorContents ("clientId");
+                auto newSecret = credentialWindow->getTextEditorContents ("clientSecret");
+                
+                if (processor.saveCloudflareCredentials (newId, newSecret))
+                {
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::InfoIcon,
+                        "Credentials Saved",
+                        "API Access credentials saved successfully.",
+                        "OK"
+                    );
+                }
+                else
+                {
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Save Failed",
+                        "Could not save credentials.\n"
+                        "Check file permissions.",
+                        "OK"
+                    );
+                }
+            }
+            
+            // JUCE will delete the window automatically
+        }
+    ), true);
 }

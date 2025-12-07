@@ -109,6 +109,12 @@ private:
      * Useful for debugging and viewing generation history
      */
     juce::TextButton openLogButton { "Open Log" };
+
+    /**
+     * Button to open Cloudflare Access settings dialog
+     * Allows user to enter CF Access credentials for secure API access
+     */
+    juce::TextButton settingsButton { "API Settings" };
     
     /**
      * Label for video clip offset input (deprecated TODO remove in future)
@@ -283,6 +289,14 @@ private:
      */
     void handleT2ARenderButtonClicked();
     
+    /**
+     * Show Cloudflare Access credential dialog
+     * Allows user to enter Client ID and Client Secret for secure API access
+     * Saves credentials to config.json file in plugin bundle
+     */
+    void showCredentialDialog();
+
+
     //==============================================================================
     // Async PTSL Communication
     //==============================================================================

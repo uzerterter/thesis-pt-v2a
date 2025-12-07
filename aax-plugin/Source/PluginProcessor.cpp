@@ -1431,6 +1431,217 @@ bool PtV2AProcessor::validateVideoDuration(
 }
 
 //==============================================================================
+// Cloudflare Access Credential Management Implementation
+//==============================================================================
+
+juce::File PtV2AProcessor::getConfigFilePath()
+{
+    auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+    auto contentsDir = pluginFile.getParentDirectory().getParentDirectory();
+    
+    return contentsDir.getChildFile("Resources")
+                      .getChildFile("python")
+                      .getChildFile("Lib")
+                      .getChildFile("site-packages")
+                      .getChildFile("api")
+                      .getChildFile("config.json");
+}
+
+juce::String PtV2AProcessor::getCloudflareClientId()
+{
+    auto configFile = getConfigFilePath();
+    if (!configFile.existsAsFile())
+        return {};
+    
+    auto json = juce::JSON::parse (configFile.loadFileAsString());
+    if (auto* root = json.getDynamicObject())
+        return root->getProperty ("cf_access_client_id").toString();
+    
+    return {};
+}
+
+juce::String PtV2AProcessor::getCloudflareClientSecret()
+{
+    auto configFile = getConfigFilePath();
+    if (!configFile.existsAsFile())
+        return {};
+    
+    auto json = juce::JSON::parse (configFile.loadFileAsString());
+    if (auto* root = json.getDynamicObject())
+        return root->getProperty ("cf_access_client_secret").toString();
+    
+    return {};
+}
+
+bool PtV2AProcessor::saveCloudflareCredentials (const juce::String& clientId,
+                                                const juce::String& clientSecret)
+{
+    juce::Logger::writeToLog ("=== Saving Cloudflare Credentials ===");
+    
+    auto configFile = getConfigFilePath();
+    
+    juce::Logger::writeToLog ("Config file: " + configFile.getFullPathName());
+    
+    // Load existing config or create new
+    juce::var json;
+    if (configFile.existsAsFile())
+    {
+        json = juce::JSON::parse (configFile.loadFileAsString());
+        juce::Logger::writeToLog ("Loaded existing config.json");
+    }
+    
+    if (!json.getDynamicObject())
+    {
+        json = new juce::DynamicObject();
+        juce::Logger::writeToLog ("Created new config object");
+    }
+    
+    // Update credentials
+    auto* root = json.getDynamicObject();
+    root->setProperty ("cf_access_client_id", clientId);
+    root->setProperty ("cf_access_client_secret", clientSecret);
+    
+    juce::Logger::writeToLog ("Client ID: " + clientId);
+    juce::Logger::writeToLog ("Client Secret: " + clientSecret.substring(0, 10) + "...");
+    
+    // Write to file with pretty formatting
+    auto jsonString = juce::JSON::toString (json, false, 2);  // 2-space indent
+    
+    if (configFile.replaceWithText (jsonString))
+    {
+        juce::Logger::writeToLog ("✓ Credentials saved successfully");
+        return true;
+    }
+    else
+    {
+        juce::Logger::writeToLog ("✗ Failed to write config.json");
+        return false;
+    }
+}
+
+bool PtV2AProcessor::testCloudflareCredentials (const juce::String& clientId,
+                                                const juce::String& clientSecret,
+                                                juce::String* errorMessage)
+{
+    juce::Logger::writeToLog ("=== Testing Cloudflare Credentials ===");
+    juce::Logger::writeToLog ("Client ID: " + clientId);
+    juce::Logger::writeToLog ("Client Secret: " + clientSecret.substring(0, 10) + "...");
+    
+    auto pythonExe = getPythonExecutable();
+    auto scriptFile = getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::String errorMsg = "API client script not found";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return false;
+    }
+    
+    // Build command: python standalone_api_client.py --action test_cloudflare 
+    //                --cf-client-id "xxx" --cf-client-secret "xxx"
+    juce::StringArray commandArray;
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");
+    commandArray.add (scriptFile.getFullPathName());
+    commandArray.add ("--action");
+    commandArray.add ("test_cloudflare");
+    commandArray.add ("--cf-client-id");
+    commandArray.add (clientId);
+    commandArray.add ("--cf-client-secret");
+    commandArray.add (clientSecret);
+    
+    juce::Logger::writeToLog ("Executing credential test command...");
+    juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
+    
+    // Create child process
+    juce::ChildProcess process;
+    
+    if (!process.start (commandArray))
+    {
+        juce::String errorMsg = "Failed to start Python process";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return false;
+    }
+    
+    // Wait for completion (should be fast, <5 seconds)
+    if (!process.waitForProcessToFinish (10000))  // 10 second timeout
+    {
+        juce::String errorMsg = "Credential test timed out";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        process.kill();
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return false;
+    }
+    
+    // Read output
+    auto output = process.readAllProcessOutput().trim();
+    juce::Logger::writeToLog ("Python output: " + output);
+    
+    // Extract JSON from output (might have debug lines before/after)
+    // Look for lines starting with { (JSON response)
+    auto lines = juce::StringArray::fromLines (output);
+    juce::String jsonOutput;
+    for (const auto& line : lines)
+    {
+        if (line.trimStart().startsWith ("{"))
+        {
+            jsonOutput = line.trim();
+            break;  // Found JSON response
+        }
+    }
+    
+    if (jsonOutput.isEmpty())
+    {
+        juce::String errorMsg = "No JSON response found in Python output";
+        juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        juce::Logger::writeToLog ("Full output was: " + output);
+        if (errorMessage != nullptr)
+            *errorMessage = errorMsg;
+        return false;
+    }
+    
+    juce::Logger::writeToLog ("Extracted JSON: " + jsonOutput);
+    
+    // Parse JSON response
+    auto json = juce::JSON::parse (jsonOutput);
+    if (auto* obj = json.getDynamicObject())
+    {
+        bool success = obj->getProperty ("success");
+        auto errorFromJson = obj->getProperty ("error").toString();
+        
+        if (success)
+        {
+            juce::Logger::writeToLog ("=== Credential Test SUCCESS ===");
+            juce::Logger::writeToLog ("Credentials are valid and API is accessible");
+            if (errorMessage != nullptr)
+                *errorMessage = "";
+            return true;
+        }
+        else
+        {
+            juce::Logger::writeToLog ("=== Credential Test FAILED ===");
+            juce::Logger::writeToLog ("ERROR: " + errorFromJson);
+            if (errorMessage != nullptr)
+                *errorMessage = errorFromJson;
+            return false;
+        }
+    }
+    
+    juce::String errorMsg = "Failed to parse credential test response";
+    juce::Logger::writeToLog ("ERROR: " + errorMsg);
+    juce::Logger::writeToLog ("Raw output was: " + output);
+    if (errorMessage != nullptr)
+        *errorMessage = errorMsg;
+    return false;
+}
+
+//==============================================================================
 // Plugin Instance Creation
 //==============================================================================
 
