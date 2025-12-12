@@ -19,14 +19,14 @@ import sys
 
 
 # Configuration
-MMAUDIO_URL = "https://mmaudio.linwig.de"
-HYVF_URL = "https://hyvf.linwig.de"
+MMAUDIO_URL = "http://localhost:8000"
+HYVF_URL = "http://localhost:8001"
 QUEUE_POLL_INTERVAL = 1.0  # Poll queue status every 1 second
 
 # Test videos - using short clips
 TEST_VIDEOS = {
-    "mmaudio": "../../model-tests/data/customMicroFoleyTestSet/noSound/test_door.mp4",
-    "hyvf": "../../model-tests/data/customMicroFoleyTestSet/noSound/test_footstepsPavement.mp4",
+    "mmaudio": "../../../model-tests/data/customMicroFoleyTestSet/noSound/test_door.mp4",
+    "hyvf": "../../../model-tests/data/customMicroFoleyTestSet/noSound/test_footstepsPavement.mp4",
 }
 
 # Number of concurrent requests per API
