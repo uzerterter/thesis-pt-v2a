@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 import threading
 import psutil
+import asyncio
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from typing import Any, Dict
@@ -413,6 +414,11 @@ SMART_VIDEO_CACHE = SmartVideoCache(max_size_gb=VIDEO_CACHE_MAX_GB, ttl_minutes=
 CACHE_DIR = Path("./cache")  # Disk: temporary audio files
 CACHE_DIR.mkdir(exist_ok=True)
 
+# GPU Queue Management
+GPU_SEMAPHORE = asyncio.Semaphore(1)  # Only 1 concurrent GPU inference at a time
+active_requests = 0  # Currently running GPU inference
+pending_requests = 0  # Waiting in queue
+
 # Cache cleanup configuration
 CACHE_RETENTION_HOURS = 2  # Delete audio files older than 2 hours
 CLEANUP_INTERVAL_MINUTES = 30  # Run cleanup every 30 minutes
@@ -803,6 +809,18 @@ async def get_cache_stats():
         }
     }
 
+@app.get("/queue/status")
+async def get_queue_status():
+    """Get GPU request queue status"""
+    return {
+        "queue_enabled": True,
+        "pending_requests": pending_requests,
+        "active_requests": active_requests,
+        "max_concurrent": 1,
+        "queue_strategy": "FIFO (First In First Out)"
+    }
+
+
 @app.post("/cache/clear")
 async def clear_cache():
     """Clear video cache (keeps model cache for performance)"""
@@ -1035,20 +1053,35 @@ async def generate_audio(
             text_feats.text_feat = text_feats.text_feat.to(target_dtype)
             text_feats.uncond_text_feat = text_feats.uncond_text_feat.to(target_dtype)
         
-        # Generate audio
-        denoise_start = time.time()
-        with torch.no_grad():
-            audio, sample_rate = denoise_process(
-                visual_feats,
-                text_feats,
-                audio_len_in_s,
-                model_dict,
-                cfg,
-                guidance_scale=cfg_strength,
-                num_inference_steps=num_steps
-            )
+        # GPU Queue Management: Acquire semaphore before GPU inference
+        global pending_requests, active_requests
+        pending_requests += 1
+        logger.info(f"🔄 Request queued (pending: {pending_requests}, active: {active_requests})")
         
-        denoise_time = time.time() - denoise_start
+        async with GPU_SEMAPHORE:
+            pending_requests -= 1
+            active_requests += 1
+            logger.info(f"🔒 GPU lock acquired (pending: {pending_requests}, active: {active_requests})")
+            
+            try:
+                # Generate audio
+                denoise_start = time.time()
+                with torch.no_grad():
+                    audio, sample_rate = denoise_process(
+                        visual_feats,
+                        text_feats,
+                        audio_len_in_s,
+                        model_dict,
+                        cfg,
+                        guidance_scale=cfg_strength,
+                        num_inference_steps=num_steps
+                    )
+                
+                denoise_time = time.time() - denoise_start
+            finally:
+                active_requests -= 1
+                logger.info(f"🔓 GPU lock released (pending: {pending_requests}, active: {active_requests})")
+        
         generation_time = time.time() - start_time
         logger.info(f"⏱️  Audio denoising: {denoise_time:.2f}s")
         logger.info(f"✅ Total generation time: {generation_time:.2f}s at {sample_rate} Hz")

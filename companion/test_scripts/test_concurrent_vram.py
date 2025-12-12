@@ -19,8 +19,8 @@ import sys
 
 
 # Configuration
-MMAUDIO_URL = "http://localhost:8000"
-HYVF_URL = "http://localhost:8001"
+MMAUDIO_URL = "https://mmaudio.linwig.de"
+HYVF_URL = "https://hyvf.linwig.de"
 MONITORING_INTERVAL = 3.0  # seconds between VRAM checks during inference
 
 # Test videos - using short clips from customMicroFoleyTestSet
@@ -204,7 +204,7 @@ def get_default_params(api_url: str) -> dict:
             "prompt": "footsteps on pavement",
             "negative_prompt": "voices, music",
             "seed": 0,
-            "model_size": "xl",  # Use XL for now (user keeping it)
+            "model_size": "xxl",  # Test with XXL to check VRAM with both models
             "num_steps": 50,
             "cfg_strength": 4.5,
             "output_format": "wav",

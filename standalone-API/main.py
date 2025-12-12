@@ -438,6 +438,11 @@ SMART_VIDEO_CACHE = SmartVideoCache(max_size_gb=VIDEO_CACHE_MAX_GB, ttl_minutes=
 CACHE_DIR = Path("./cache")  # Disk: temporary audio files
 CACHE_DIR.mkdir(exist_ok=True)
 
+# GPU Queue Management
+GPU_SEMAPHORE = asyncio.Semaphore(1)  # Only 1 concurrent GPU inference at a time
+active_requests = 0  # Currently running GPU inference
+pending_requests = 0  # Waiting in queue
+
 # Cache cleanup configuration
 CACHE_RETENTION_HOURS = 2  # Delete audio files older than 2 hours
 CLEANUP_INTERVAL_MINUTES = 30  # Run cleanup every 30 minutes
@@ -862,6 +867,18 @@ async def get_cache_stats():
         }
     }
 
+@app.get("/queue/status")
+async def get_queue_status():
+    """Get GPU request queue status"""
+    return {
+        "queue_enabled": True,
+        "pending_requests": pending_requests,
+        "active_requests": active_requests,
+        "max_concurrent": 1,
+        "queue_strategy": "FIFO (First In First Out)"
+    }
+
+
 @app.post("/cache/clear")
 async def clear_cache():
     """Clear video cache (keeps model cache for performance)"""
@@ -1093,17 +1110,31 @@ async def generate_audio(
         logger.info(f"Generating audio: prompt='{prompt}', negative_prompt='{negative_prompt}', duration={duration:.2f}s, seed={seed}")
         start_time = time.time()
 
-        # Generate audio with no_grad (like demo.py)
-        # Note: generate() function returns audio-only by default (no video composite)
-        with torch.no_grad():
-            audios = generate(clip_frames,
-                              sync_frames, [prompt],
-                              negative_text=[negative_prompt] if negative_prompt else None,
-                              feature_utils=feature_utils,
-                              net=net,
-                              fm=fm,
-                              rng=rng,
-                              cfg_strength=cfg_strength)
+        # GPU Queue Management: Acquire semaphore before GPU inference
+        global pending_requests, active_requests
+        pending_requests += 1
+        logger.info(f"🔄 Request queued (pending: {pending_requests}, active: {active_requests})")
+        
+        async with GPU_SEMAPHORE:
+            pending_requests -= 1
+            active_requests += 1
+            logger.info(f"🔒 GPU lock acquired (pending: {pending_requests}, active: {active_requests})")
+            
+            try:
+                # Generate audio with no_grad (like demo.py)
+                # Note: generate() function returns audio-only by default (no video composite)
+                with torch.no_grad():
+                    audios = generate(clip_frames,
+                                      sync_frames, [prompt],
+                                      negative_text=[negative_prompt] if negative_prompt else None,
+                                      feature_utils=feature_utils,
+                                      net=net,
+                                      fm=fm,
+                                      rng=rng,
+                                      cfg_strength=cfg_strength)
+            finally:
+                active_requests -= 1
+                logger.info(f"🔓 GPU lock released (pending: {pending_requests}, active: {active_requests})")
 
         generation_time = time.time() - start_time
         logger.info(f"Audio generated in {generation_time:.2f}s")
