@@ -49,7 +49,7 @@ class RequestResult:
 
 async def poll_queue_status(session: aiohttp.ClientSession, api_url: str, stop_event: asyncio.Event):
     """Background task to continuously poll queue status"""
-    api_name = "MMAudio" if "8000" in api_url else "HunyuanVideo"
+    api_name = "MMAudio" if "mmaudio" in api_url.lower() else "HunyuanVideo"
     
     while not stop_event.is_set():
         try:
@@ -76,7 +76,7 @@ async def send_single_request(
 ) -> RequestResult:
     """Send a single request to the API"""
     
-    api_name = "MMAudio" if "8000" in api_url else "HunyuanVideo-Foley"
+    api_name = "MMAudio" if "mmaudio" in api_url.lower() else "HunyuanVideo-Foley"
     video_name = Path(video_path).name
     
     print(f"🚀 Request #{request_id} starting: {api_name} with {video_name}")
@@ -98,10 +98,16 @@ async def send_single_request(
             async with session.post(f"{api_url}/generate", data=data, timeout=600) as resp:
                 audio_data = await resp.read()
                 success = resp.status == 200
-                error = None if success else f"HTTP {resp.status}"
+                if not success:
+                    error_text = await resp.text() if resp.status != 200 else ""
+                    error = f"HTTP {resp.status}: {error_text[:100]}"
+                    print(f"   ❌ Request #{request_id} failed: {error}")
+                else:
+                    error = None
         except Exception as e:
             success = False
             error = str(e)
+            print(f"   ❌ Request #{request_id} exception: {error}")
     
     duration = time.time() - start_time
     
@@ -120,7 +126,7 @@ async def send_single_request(
 
 def get_default_params(api_url: str, request_id: int) -> dict:
     """Get default parameters based on API"""
-    if ":8000" in api_url:  # MMAudio
+    if "mmaudio" in api_url.lower():  # MMAudio
         return {
             "prompt": f"test sound {request_id}",
             "negative_prompt": "voices, music",
@@ -217,21 +223,25 @@ async def run_queue_test():
         ]
         
         # Create all requests for both APIs
+        # IMPORTANT: Create tasks without await to ensure true concurrency
         tasks = []
         
-        # MMAudio requests
+        # MMAudio requests (create coroutines but don't await yet)
         for i in range(REQUESTS_PER_API):
             params = get_default_params(MMAUDIO_URL, i)
-            task = send_single_request(session, i+1, MMAUDIO_URL, mmaudio_video, params)
-            tasks.append(task)
+            coro = send_single_request(session, i+1, MMAUDIO_URL, mmaudio_video, params)
+            tasks.append(asyncio.create_task(coro))
         
-        # HunyuanVideo-Foley requests
+        # HunyuanVideo-Foley requests (create coroutines but don't await yet)
         for i in range(REQUESTS_PER_API):
             params = get_default_params(HYVF_URL, i)
-            task = send_single_request(session, i+1, HYVF_URL, hyvf_video, params)
-            tasks.append(task)
+            coro = send_single_request(session, i+1, HYVF_URL, hyvf_video, params)
+            tasks.append(asyncio.create_task(coro))
         
-        # Execute all requests concurrently
+        # Small delay to ensure all tasks are created before any completes
+        await asyncio.sleep(0.1)
+        
+        # Execute all requests concurrently (they're already running)
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Stop monitoring
