@@ -918,6 +918,11 @@ async def generate_audio(
                        Recommended: False (default) for most use cases.
     """
     try:
+        # Track request in queue immediately (before any processing)
+        global pending_requests
+        pending_requests += 1
+        logger.info(f"🔄 Request received (pending: {pending_requests})")
+
         # Save uploaded video to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
             content = await video.read()
@@ -1054,9 +1059,8 @@ async def generate_audio(
             text_feats.uncond_text_feat = text_feats.uncond_text_feat.to(target_dtype)
         
         # GPU Queue Management: Acquire semaphore before GPU inference
-        global pending_requests, active_requests
-        pending_requests += 1
-        logger.info(f"🔄 Request queued (pending: {pending_requests}, active: {active_requests})")
+        global active_requests
+        logger.info(f"⏳ Waiting for GPU lock (pending: {pending_requests}, active: {active_requests})")
         
         async with GPU_SEMAPHORE:
             pending_requests -= 1

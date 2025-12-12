@@ -972,6 +972,11 @@ async def generate_audio(
         full_precision: Use torch.float32 (high quality, slower) instead of torch.bfloat16 (default, faster)
     """
     try:
+        # Track request in queue immediately (before any processing)
+        global pending_requests
+        pending_requests += 1
+        logger.info(f"🔄 Request received (pending: {pending_requests})")
+        
         # Determine mode: T2A (text-only) or V2A (video-to-audio)
         is_t2a_mode = video is None
         
@@ -1111,9 +1116,8 @@ async def generate_audio(
         start_time = time.time()
 
         # GPU Queue Management: Acquire semaphore before GPU inference
-        global pending_requests, active_requests
-        pending_requests += 1
-        logger.info(f"🔄 Request queued (pending: {pending_requests}, active: {active_requests})")
+        global active_requests
+        logger.info(f"⏳ Waiting for GPU lock (pending: {pending_requests}, active: {active_requests})")
         
         async with GPU_SEMAPHORE:
             pending_requests -= 1
