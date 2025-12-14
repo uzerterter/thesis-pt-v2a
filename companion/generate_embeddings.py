@@ -10,10 +10,15 @@ This script:
 5. Creates vector index for fast similarity search
 
 Run this ONCE after database is populated with sounds.
+
+Usage:
+    python generate_embeddings.py           # Generate base embeddings (512-dim)
+    python generate_embeddings.py --large   # Generate large embeddings (768-dim)
 """
 
 import os
 import sys
+import argparse
 from pathlib import Path
 import logging
 from typing import List, Tuple
@@ -37,15 +42,30 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://ludwig:thesis2025@localhost:5432/bbc_sounds"
 )
-MODEL_NAME = os.getenv("XCLIP_MODEL", "microsoft/xclip-base-patch32")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 32  # Process this many descriptions at once
+
+# Model configurations
+MODEL_CONFIGS = {
+    'base': {
+        'name': 'microsoft/xclip-base-patch32',
+        'column': 'text_embedding',
+        'dimension': 512,
+        'index': 'idx_text_emb'
+    },
+    'large': {
+        'name': 'microsoft/xclip-large-patch14',
+        'column': 'text_embedding_large',
+        'dimension': 768,
+        'index': 'idx_text_emb_large'
+    }
+}
 
 
 class XCLIPTextEncoder:
     """X-CLIP text encoder for generating embeddings"""
     
-    def __init__(self, model_name: str = MODEL_NAME, device: str = DEVICE):
+    def __init__(self, model_name: str, device: str = DEVICE):
         """Initialize X-CLIP text encoder"""
         logger.info(f"Loading X-CLIP model: {model_name}")
         logger.info(f"Device: {device}")
@@ -87,48 +107,74 @@ class XCLIPTextEncoder:
             return text_features.cpu().numpy()
 
 
-def fetch_sounds_to_encode(conn) -> List[Tuple[int, str]]:
+def ensure_column_exists(conn, column_name: str, dimension: int):
+    """Ensure embedding column exists in database"""
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'bbc_sounds' AND column_name = '{column_name}'
+        """)
+        
+        if not cursor.fetchone():
+            logger.info(f"Creating column {column_name} with dimension {dimension}...")
+            cursor.execute(f"""
+                ALTER TABLE bbc_sounds 
+                ADD COLUMN {column_name} vector({dimension})
+            """)
+            conn.commit()
+            logger.info(f"✓ Column {column_name} created")
+        else:
+            logger.info(f"✓ Column {column_name} exists")
+
+
+def fetch_sounds_to_encode(conn, column_name: str) -> List[Tuple[int, str]]:
     """
     Fetch all sounds that need embeddings.
+    
+    Args:
+        column_name: Name of embedding column to check
     
     Returns:
         List of (id, description) tuples
     """
     with conn.cursor() as cursor:
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, description
-            FROM available_sounds
-            WHERE text_embedding IS NULL
+            FROM bbc_sounds
+            WHERE file_exists = TRUE
+              AND {column_name} IS NULL
             ORDER BY id
         """)
         return cursor.fetchall()
 
 
-def update_embeddings_batch(conn, embeddings_data: List[Tuple]):
+def update_embeddings_batch(conn, embeddings_data: List[Tuple], column_name: str):
     """
     Update embeddings in database (batch operation).
     
     Args:
         embeddings_data: List of (embedding_list, sound_id) tuples
+        column_name: Name of embedding column to update
     """
     with conn.cursor() as cursor:
-        execute_batch(cursor, """
+        execute_batch(cursor, f"""
             UPDATE bbc_sounds
-            SET text_embedding = %s::vector
+            SET {column_name} = %s::vector
             WHERE id = %s
         """, embeddings_data, page_size=100)
         conn.commit()
 
 
-def create_vector_index(conn):
+def create_vector_index(conn, column_name: str, index_name: str):
     """Create vector index for fast similarity search"""
     logger.info("Creating vector index for fast search...")
     
     with conn.cursor() as cursor:
         # Check if index already exists
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT indexname FROM pg_indexes
-            WHERE tablename = 'bbc_sounds' AND indexname = 'idx_text_emb'
+            WHERE tablename = 'bbc_sounds' AND indexname = '{index_name}'
         """)
         
         if cursor.fetchone():
@@ -137,19 +183,41 @@ def create_vector_index(conn):
         
         # Create IVFFlat index (approximate nearest neighbor)
         # lists parameter: sqrt(row_count) is a good default
-        cursor.execute("""
-            CREATE INDEX idx_text_emb ON bbc_sounds
-            USING ivfflat (text_embedding vector_cosine_ops)
+        cursor.execute(f"""
+            CREATE INDEX {index_name} ON bbc_sounds
+            USING ivfflat ({column_name} vector_cosine_ops)
             WITH (lists = 100);
         """)
         conn.commit()
         logger.info("✓ Vector index created")
 
 
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description='Generate X-CLIP text embeddings for BBC Sound Archive'
+    )
+    parser.add_argument(
+        '--large',
+        action='store_true',
+        help='Use X-CLIP large model (768-dim) instead of base (512-dim)'
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main embedding generation function"""
+    # Parse arguments
+    args = parse_args()
+    
+    # Select model configuration
+    model_type = 'large' if args.large else 'base'
+    config = MODEL_CONFIGS[model_type]
+    
     logger.info("=" * 80)
     logger.info("BBC Sound Archive - Text Embedding Generation")
+    logger.info(f"Model: {config['name']} ({model_type})")
+    logger.info(f"Column: {config['column']} (dimension: {config['dimension']})")
     logger.info("=" * 80)
     logger.info("")
     
@@ -165,9 +233,13 @@ def main():
         return 1
     
     try:
+        # Ensure column exists
+        ensure_column_exists(conn, config['column'], config['dimension'])
+        logger.info("")
+        
         # Fetch sounds to encode
         logger.info("Fetching sounds from database...")
-        sounds_to_encode = fetch_sounds_to_encode(conn)
+        sounds_to_encode = fetch_sounds_to_encode(conn, config['column'])
         total_sounds = len(sounds_to_encode)
         
         if total_sounds == 0:
@@ -178,7 +250,7 @@ def main():
         logger.info("")
         
         # Initialize encoder
-        encoder = XCLIPTextEncoder(MODEL_NAME, DEVICE)
+        encoder = XCLIPTextEncoder(config['name'], DEVICE)
         logger.info("")
         
         # Process in batches
@@ -205,7 +277,7 @@ def main():
                 ]
                 
                 # Update database
-                update_embeddings_batch(conn, embeddings_data)
+                update_embeddings_batch(conn, embeddings_data, config['column'])
                 
                 processed += len(batch_texts)
                 progress = processed / total_sounds * 100
@@ -222,7 +294,7 @@ def main():
                 (emb.tolist(), sound_id)
                 for emb, sound_id in zip(embeddings, batch_ids)
             ]
-            update_embeddings_batch(conn, embeddings_data)
+            update_embeddings_batch(conn, embeddings_data, config['column'])
             processed += len(batch_texts)
         
         logger.info("=" * 80)
@@ -230,7 +302,7 @@ def main():
         logger.info("")
         
         # Create vector index
-        create_vector_index(conn)
+        create_vector_index(conn, config['column'], config['index'])
         logger.info("")
         
         # Final statistics
@@ -239,7 +311,9 @@ def main():
         logger.info("COMPLETED!")
         logger.info("=" * 80)
         logger.info(f"Total sounds encoded: {processed}")
+        logger.info(f"Model: {config['name']}")
         logger.info(f"Embedding dimension: {encoder.embedding_dim}")
+        logger.info(f"Column: {config['column']}")
         logger.info(f"Time elapsed: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
         logger.info(f"Average: {elapsed/processed:.2f} seconds per sound")
         logger.info("")
