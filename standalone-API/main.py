@@ -874,7 +874,7 @@ async def get_queue_status():
         "queue_enabled": True,
         "pending_requests": pending_requests,
         "active_requests": active_requests,
-        "max_concurrent": 1,
+        "max_concurrent": GPU_SEMAPHORE._value,
         "queue_strategy": "FIFO (First In First Out)"
     }
 
