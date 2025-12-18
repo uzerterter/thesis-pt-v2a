@@ -136,11 +136,16 @@ def fetch_sounds_to_encode(conn, column_name: str) -> List[Tuple[int, str]]:
         column_name: Name of embedding column to check
     
     Returns:
-        List of (id, description) tuples
+        List of (id, text) tuples where text = "{category}: {description}"
     """
     with conn.cursor() as cursor:
         cursor.execute(f"""
-            SELECT id, description
+            SELECT id, 
+                   CASE 
+                       WHEN category IS NOT NULL AND category != '' AND category != 'N/A' 
+                       THEN category || ': ' || description
+                       ELSE description
+                   END as text
             FROM bbc_sounds
             WHERE file_exists = TRUE
               AND {column_name} IS NULL

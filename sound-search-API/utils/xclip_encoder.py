@@ -38,6 +38,9 @@ class XCLIPEncoder:
         
         logger.info(f"✓ X-CLIP loaded on {device}")
         
+        # Determine image size based on model (base=224, large=336)
+        self.image_size = 336 if "large" in model_name.lower() else 224
+        
         # Get embedding dimension
         with torch.no_grad():
             dummy_text = self.processor(text=["test"], return_tensors="pt", padding=True)
@@ -45,6 +48,7 @@ class XCLIPEncoder:
             self.embedding_dim = dummy_output.shape[-1]
         
         logger.info(f"Embedding dimension: {self.embedding_dim}")
+        logger.info(f"Image size: {self.image_size}x{self.image_size}")
     
     def encode_text(self, text: Union[str, List[str]]) -> np.ndarray:
         """
@@ -103,9 +107,17 @@ class XCLIPEncoder:
             # Assume it's a path
             frames = self._extract_frames(str(video_file), num_frames)
         
-        # Encode frames
+        # Encode frames with model-specific image size
         with torch.no_grad():
-            inputs = self.processor(videos=list(frames), return_tensors="pt")
+            # Process with correct size - need both resize and crop for square images
+            inputs = self.processor(
+                videos=list(frames), 
+                return_tensors="pt",
+                do_resize=True,
+                size={"shortest_edge": self.image_size},
+                do_center_crop=True,
+                crop_size={"height": self.image_size, "width": self.image_size}
+            )
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             video_features = self.model.get_video_features(**inputs)

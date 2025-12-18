@@ -152,6 +152,7 @@ checkpoints/
 test-outputs/
 output/
 cache/
+/companion/test_results
 
 # PTSL venv
 venv_ptsl*/

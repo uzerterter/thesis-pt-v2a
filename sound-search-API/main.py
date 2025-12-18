@@ -121,7 +121,7 @@ async def health_check():
         stats = db_client.get_stats()
         return {
             "status": "ok",
-            "model": MODEL_NAME,
+            "model": encoder.model_name if encoder else MODEL_NAME,
             "device": DEVICE,
             "database": "connected",
             "available_sounds": stats["available_sounds"],
@@ -132,21 +132,79 @@ async def health_check():
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
 
+@app.post("/admin/switch-model")
+async def switch_model(model_name: str = Form(...)):
+    """
+    Switch X-CLIP model at runtime.
+    
+    Supported models:
+    - microsoft/xclip-base-patch32 (8 frames)
+    - microsoft/xclip-base-patch32-16-frames (16 frames)
+    - microsoft/xclip-large-patch14 (8 frames, higher quality)
+    - microsoft/xclip-large-patch14-16-frames (16 frames, higher quality)
+    
+    Args:
+        model_name: HuggingFace model identifier
+    
+    Returns:
+        New model info
+    """
+    global encoder
+    
+    try:
+        logger.info(f"=" * 60)
+        logger.info(f"Switching to model: {model_name}")
+        
+        # Unload old model
+        if encoder:
+            old_model = encoder.model_name
+            del encoder
+            torch.cuda.empty_cache()
+            logger.info(f"Unloaded: {old_model}")
+        
+        # Load new model
+        encoder = XCLIPEncoder(model_name, DEVICE)
+        
+        # Update database client to use correct embedding column
+        db_client.set_embedding_column(encoder.embedding_dim)
+        
+        logger.info(f"✓ Model switched: {model_name}")
+        logger.info(f"  Embedding dim: {encoder.embedding_dim}")
+        logger.info("=" * 60)
+        
+        return {
+            "status": "ok",
+            "model": model_name,
+            "embedding_dim": encoder.embedding_dim,
+            "device": DEVICE
+        }
+    except Exception as e:
+        logger.error(f"❌ Model switch failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Model switch failed: {str(e)}")
+
+
 @app.post("/search/sounds")
 async def search_sounds(
     video: Optional[UploadFile] = File(None),
     text: Optional[str] = Form(None),
-    limit: int = Form(10),
-    threshold: float = Form(0.0)
+    limit: int = Form(5),
+    threshold: float = Form(0.0),
+    num_frames: int = Form(16),
+    text_weight: float = Form(0.6)
 ):
     """
-    Search BBC sounds by video or text using X-CLIP.
+    Search BBC sounds by video and/or text using X-CLIP.
+    
+    Supports hybrid search: video + text prompt with configurable weighting.
     
     Args:
         video: Video file (optional)
-        text: Text query (optional)
-        limit: Maximum number of results (default: 10)
+        text: Text query/prompt (optional)
+        limit: Maximum number of results (default: 5)
         threshold: Minimum similarity threshold 0-1 (default: 0.0)
+        num_frames: Number of frames to extract from video (default: 16)
+        text_weight: Weight for text prompt when both video+text provided (default: 0.6)
+                    Final embedding = (1-text_weight)*video + text_weight*text
     
     Returns:
         List of matching sounds with metadata and similarity scores
@@ -159,11 +217,23 @@ async def search_sounds(
     
     try:
         # Generate query embedding
-        if video:
-            logger.info(f"Processing video query: {video.filename}")
-            query_embedding = await encoder.encode_video(video)
+        if video and text:
+            # Hybrid search: video + text prompt
+            logger.info(f"Processing hybrid query: video={video.filename}, text='{text}', text_weight={text_weight}")
+            video_embedding = await encoder.encode_video(video, num_frames=num_frames)
+            text_embedding = encoder.encode_text(text)
+            
+            # Weighted fusion
+            query_embedding = (1 - text_weight) * video_embedding + text_weight * text_embedding
+            query_type = f"hybrid (video {1-text_weight:.0%} + text {text_weight:.0%})"
+            
+        elif video:
+            # Video-only search
+            logger.info(f"Processing video query: {video.filename}, frames={num_frames}")
+            query_embedding = await encoder.encode_video(video, num_frames=num_frames)
             query_type = "video"
         else:
+            # Text-only search
             logger.info(f"Processing text query: {text}")
             query_embedding = encoder.encode_text(text)
             query_type = "text"
@@ -228,9 +298,18 @@ async def download_sound(sound_id: int):
         if not sound:
             raise HTTPException(status_code=404, detail="Sound not found")
         
-        file_path = Path(sound["file_path"])
+        # Convert absolute host path to container path
+        # DB has: /mnt/disk1/users/ludwig/ludwig-thesis/BBCSoundDownloader/sounds/Category/file.wav
+        # Container needs: /sounds/Category/file.wav
+        db_path = sound["file_path"]
+        if "/BBCSoundDownloader/sounds/" in db_path:
+            relative_path = db_path.split("/BBCSoundDownloader/sounds/", 1)[1]
+            file_path = Path("/sounds") / relative_path
+        else:
+            file_path = Path(db_path)
+        
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+            raise HTTPException(status_code=404, detail=f"Audio file not found: {file_path}")
         
         return FileResponse(
             path=file_path,
@@ -262,9 +341,18 @@ async def preview_sound(sound_id: int, duration: int = 5):
         if not sound:
             raise HTTPException(status_code=404, detail="Sound not found")
         
-        file_path = Path(sound["file_path"])
+        # Convert absolute host path to container path
+        # DB has: /mnt/disk1/users/ludwig/ludwig-thesis/BBCSoundDownloader/sounds/Category/file.wav
+        # Container needs: /sounds/Category/file.wav
+        db_path = sound["file_path"]
+        if "/BBCSoundDownloader/sounds/" in db_path:
+            relative_path = db_path.split("/BBCSoundDownloader/sounds/", 1)[1]
+            file_path = Path("/sounds") / relative_path
+        else:
+            file_path = Path(db_path)
+        
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+            raise HTTPException(status_code=404, detail=f"Audio file not found: {file_path}")
         
         # TODO: Implement audio trimming for preview
         # For now, just return the full file

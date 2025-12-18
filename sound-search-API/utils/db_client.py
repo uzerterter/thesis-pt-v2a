@@ -22,8 +22,22 @@ class DatabaseClient:
             database_url: PostgreSQL connection URL
         """
         self.database_url = database_url
+        self.embedding_column = "text_embedding"  # Default, can be changed via set_embedding_column()
         self.conn = psycopg2.connect(database_url)
-        logger.info("Database connection established")
+        logger.info(f"Database connection established (using {self.embedding_column})")
+    
+    def set_embedding_column(self, embedding_dim: int):
+        """
+        Set embedding column based on model dimension.
+        
+        Args:
+            embedding_dim: Embedding dimension (512 for base, 768 for large)
+        """
+        if embedding_dim == 768:
+            self.embedding_column = "text_embedding_large"
+        else:
+            self.embedding_column = "text_embedding"
+        logger.info(f"Switched to embedding column: {self.embedding_column}")
     
     def get_stats(self) -> Dict[str, int]:
         """
@@ -93,37 +107,43 @@ class DatabaseClient:
         Returns:
             List of matching sounds with metadata and similarity scores
         """
-        # Convert numpy array to list for PostgreSQL
-        embedding_list = query_embedding.tolist()
-        
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # Use cosine similarity with pgvector
-            # Note: <=> is cosine distance, so 1 - distance = similarity
-            cursor.execute("""
-                SELECT 
-                    id,
-                    location,
-                    description,
-                    category,
-                    cdname,
-                    duration_seconds,
-                    file_path,
-                    1 - (text_embedding <=> %s::vector) as similarity
-                FROM available_sounds
-                WHERE text_embedding IS NOT NULL
-                    AND (1 - (text_embedding <=> %s::vector)) >= %s
-                ORDER BY text_embedding <=> %s::vector
-                LIMIT %s
-            """, (embedding_list, embedding_list, threshold, embedding_list, limit))
+        try:
+            # Convert numpy array to list for PostgreSQL
+            embedding_list = query_embedding.tolist()
             
-            results = []
-            for row in cursor.fetchall():
-                result = dict(row)
-                # Round similarity to 4 decimals
-                result['similarity'] = round(result['similarity'], 4)
-                results.append(result)
-            
-            return results
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Use cosine similarity with pgvector
+                # Note: <=> is cosine distance, so 1 - distance = similarity
+                query = f"""
+                    SELECT 
+                        id,
+                        location,
+                        description,
+                        category,
+                        cdname,
+                        duration_seconds,
+                        file_path,
+                        1 - ({self.embedding_column} <=> %s::vector) as similarity
+                    FROM available_sounds
+                    WHERE {self.embedding_column} IS NOT NULL
+                        AND (1 - ({self.embedding_column} <=> %s::vector)) >= %s
+                    ORDER BY {self.embedding_column} <=> %s::vector
+                    LIMIT %s
+                """
+                cursor.execute(query, (embedding_list, embedding_list, threshold, embedding_list, limit))
+                
+                results = []
+                for row in cursor.fetchall():
+                    result = dict(row)
+                    # Round similarity to 4 decimals
+                    result['similarity'] = round(result['similarity'], 4)
+                    results.append(result)
+                
+                return results
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Vector search failed: {e}")
+            raise
     
     def get_sound_by_id(self, sound_id: int) -> Optional[Dict[str, Any]]:
         """
