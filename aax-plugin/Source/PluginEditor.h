@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "SoundRecommendationsComponent.h"
 
 // Forward declaration to avoid circular include
 // (PluginProcessor.h already includes this file)
@@ -115,6 +116,13 @@ private:
      * Allows user to enter CF Access credentials for secure API access
      */
     juce::TextButton settingsButton { "API Settings" };
+    
+    /**
+     * Sound recommendations component for displaying BBC Sound Search results
+     * Shows search results with navigation, preview, and import functionality
+     * Placed below the Render button
+     */
+    SoundRecommendationsComponent soundRecommendations;
     
     /**
      * Label for video clip offset input (deprecated TODO remove in future)
@@ -288,6 +296,20 @@ private:
      * @note Now uses timeline selection like V2A for consistent behavior
      */
     void handleT2ARenderButtonClicked();
+    
+    /**
+     * Handle sound preview button click
+     * Loads and plays the selected sound in the plugin
+     * @param sound The sound to preview
+     */
+    void handleSoundPreview (const SoundResult& sound);
+    
+    /**
+     * Handle sound import button click
+     * Imports the selected sound to Pro Tools timeline at current position
+     * @param sound The sound to import
+     */
+    void handleSoundImport (const SoundResult& sound);
     
     /**
      * Show Cloudflare Access credential dialog

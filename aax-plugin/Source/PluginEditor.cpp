@@ -32,6 +32,17 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     // Configure settings button with click handler
     settingsButton.onClick = [this] { showCredentialDialog(); };
         addAndMakeVisible (settingsButton);
+    
+    // Configure sound recommendations component
+    soundRecommendations.onPreview = [this] (const SoundResult& sound)
+    {
+        handleSoundPreview (sound);
+    };
+    soundRecommendations.onImport = [this] (const SoundResult& sound)
+    {
+        handleSoundImport (sound);
+    };
+    addAndMakeVisible (soundRecommendations);
 
     // First-launch check: show dialog if credentials are missing
     if (processor.getCloudflareClientSecret().isEmpty())
@@ -393,6 +404,11 @@ void PtV2AEditor::resized()
     // renderDummyButton.setBounds (startX, y, dummyW, h); // (deprecated TODO remove in future)
     startX += dummyW + gap2;
     openLogButton.setBounds (startX, y, openLogW, h);
+
+    // Sound recommendations component - placed below render button (only visible when results available)
+    r.removeFromTop (15);  // Spacing
+    auto soundRecommendationsArea = r.removeFromTop (140);  // Fixed height for component
+    soundRecommendations.setBounds (soundRecommendationsArea);
 
     // Settings button at bottom-right
     auto settingsRow = r.removeFromBottom (28);
@@ -1875,4 +1891,50 @@ void PtV2AEditor::showCredentialDialog()
             // JUCE will delete the window automatically
         }
     ), true);
+}
+//==============================================================================
+// Sound Search Event Handlers
+//==============================================================================
+
+void PtV2AEditor::handleSoundPreview (const SoundResult& sound)
+{
+    juce::Logger::writeToLog ("=== Sound Preview Clicked ===");
+    juce::Logger::writeToLog ("Sound ID: " + juce::String (sound.id));
+    juce::Logger::writeToLog ("Description: " + sound.description);
+    juce::Logger::writeToLog ("Local Path: " + sound.localPath);
+    
+    // TODO: Implement audio preview playback using JUCE AudioFormatManager
+    // For now, show info dialog
+    juce::AlertWindow::showMessageBoxAsync (
+        juce::MessageBoxIconType::InfoIcon,
+        "Preview Sound",
+        "Preview functionality coming soon!\n\n"
+        "Sound: " + sound.description + "\n"
+        "Category: " + sound.category + "\n"
+        "Similarity: " + juce::String (sound.similarity, 3) + "\n"
+        "File: " + sound.filename,
+        "OK"
+    );
+}
+
+void PtV2AEditor::handleSoundImport (const SoundResult& sound)
+{
+    juce::Logger::writeToLog ("=== Sound Import Clicked ===");
+    juce::Logger::writeToLog ("Sound ID: " + juce::String (sound.id));
+    juce::Logger::writeToLog ("Description: " + sound.description);
+    juce::Logger::writeToLog ("Local Path: " + sound.localPath);
+    
+    // TODO: Implement import to Pro Tools timeline (similar to T2A import mechanism)
+    // Use processor's importAudioToTimeline() or similar function
+    // For now, show info dialog
+    juce::AlertWindow::showMessageBoxAsync (
+        juce::MessageBoxIconType::InfoIcon,
+        "Import Sound",
+        "Import functionality coming soon!\n\n"
+        "This will import the sound to your Pro Tools timeline\n"
+        "at the current playhead position.\n\n"
+        "Sound: " + sound.description + "\n"
+        "File: " + sound.localPath,
+        "OK"
+    );
 }

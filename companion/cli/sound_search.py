@@ -27,10 +27,14 @@ import requests
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from api.config import get_cf_headers
+
 
 # Default API endpoint
-DEFAULT_API_URL = "http://localhost:8002"
-# DEFAULT_API_URL = "https://sounds.linwig.de"  # For using cloudflared 
+# DEFAULT_API_URL = "http://localhost:8002"
+DEFAULT_API_URL = "https://sounds.linwig.de"  # For using cloudflared 
 
 
 class SoundSearchAPI:
@@ -38,6 +42,7 @@ class SoundSearchAPI:
     
     def __init__(self, base_url: str = DEFAULT_API_URL):
         self.base_url = base_url.rstrip('/')
+        self.headers = get_cf_headers()  # Load Cloudflare Access headers if configured
         
     def search_sounds(
         self, 
@@ -81,7 +86,7 @@ class SoundSearchAPI:
             raise ValueError("Must provide either video_path or text_query")
             
         try:
-            response = requests.post(url, files=files, data=data)
+            response = requests.post(url, files=files, data=data, headers=self.headers)
             response.raise_for_status()
             return response.json()
         finally:
@@ -100,7 +105,7 @@ class SoundSearchAPI:
             Sound metadata dict
         """
         url = f"{self.base_url}/sounds/{sound_id}"
-        response = requests.get(url)
+        response = requests.get(url, headers=self.headers)
         response.raise_for_status()
         return response.json()
         
@@ -116,7 +121,7 @@ class SoundSearchAPI:
             Full path to downloaded file
         """
         url = f"{self.base_url}/sounds/{sound_id}/download"
-        response = requests.get(url)
+        response = requests.get(url, headers=self.headers)
         response.raise_for_status()
         
         # Get filename from Content-Disposition header
