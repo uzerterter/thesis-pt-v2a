@@ -35,7 +35,7 @@ DATABASE_URL = os.getenv(
     "postgresql://ludwig:thesis2025@postgres:5432/bbc_sounds"
 )
 BBC_SOUNDS_PATH = Path(os.getenv("BBC_SOUNDS_PATH", "/sounds"))
-MODEL_NAME = os.getenv("XCLIP_MODEL", "microsoft/xclip-base-patch32")
+MODEL_NAME = os.getenv("XCLIP_MODEL", "microsoft/xclip-base-patch32-16-frames")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Global variables for model and DB

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class XCLIPEncoder:
     """X-CLIP encoder for video and text features"""
     
-    def __init__(self, model_name: str = "microsoft/xclip-base-patch32", device: str = "cuda"):
+    def __init__(self, model_name: str = "microsoft/xclip-base-patch32-16-frames", device: str = "cuda"):
         """
         Initialize X-CLIP encoder.
         
@@ -33,8 +33,23 @@ class XCLIPEncoder:
         
         logger.info(f"Loading X-CLIP model: {model_name}")
         self.processor = AutoProcessor.from_pretrained(model_name)
+        
+        # Load model with optimizations
         self.model = AutoModel.from_pretrained(model_name).to(device)
         self.model.eval()
+        
+        # Enable half precision (FP16) for faster inference on GPU
+        if device == "cuda":
+            self.model = self.model.half()
+            logger.info("✓ Half precision (FP16) enabled")
+        
+        # Compile model for faster inference (PyTorch 2.0+)
+        # Reduces overhead and optimizes graph execution
+        try:
+            self.model = torch.compile(self.model, mode="reduce-overhead")
+            logger.info("✓ torch.compile enabled (reduce-overhead mode)")
+        except Exception as e:
+            logger.warning(f"torch.compile not available: {e}")
         
         logger.info(f"✓ X-CLIP loaded on {device}")
         
@@ -60,6 +75,9 @@ class XCLIPEncoder:
         Returns:
             Normalized embedding vector(s) as numpy array
         """
+        import time
+        start_time = time.time()
+        
         if isinstance(text, str):
             text = [text]
         
@@ -67,13 +85,23 @@ class XCLIPEncoder:
             inputs = self.processor(text=text, return_tensors="pt", padding=True)
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
-            text_features = self.model.get_text_features(**inputs)
+            inference_start = time.time()
+            # Use autocast for mixed precision if on CUDA
+            if self.device == "cuda":
+                with torch.cuda.amp.autocast():
+                    text_features = self.model.get_text_features(**inputs)
+            else:
+                text_features = self.model.get_text_features(**inputs)
+            inference_time = (time.time() - inference_start) * 1000
             
             # Normalize
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
             
             # Return as numpy
             embeddings = text_features.cpu().numpy()
+            
+            total_time = (time.time() - start_time) * 1000
+            logger.info(f"Text encoding: {total_time:.1f}ms (inference: {inference_time:.1f}ms)")
             
             # Return single vector if single text input
             if len(text) == 1:
@@ -91,6 +119,9 @@ class XCLIPEncoder:
         Returns:
             Normalized embedding vector as numpy array
         """
+        import time
+        start_time = time.time()
+        
         # Handle UploadFile (FastAPI)
         if hasattr(video_file, 'read'):
             video_bytes = await video_file.read()
@@ -100,15 +131,20 @@ class XCLIPEncoder:
                 tmp_path = tmp.name
             
             try:
+                frame_extraction_start = time.time()
                 frames = self._extract_frames(tmp_path, num_frames)
+                frame_extraction_time = (time.time() - frame_extraction_start) * 1000
             finally:
                 Path(tmp_path).unlink()
         else:
             # Assume it's a path
+            frame_extraction_start = time.time()
             frames = self._extract_frames(str(video_file), num_frames)
+            frame_extraction_time = (time.time() - frame_extraction_start) * 1000
         
         # Encode frames with model-specific image size
         with torch.no_grad():
+            preprocessing_start = time.time()
             # Process with correct size - need both resize and crop for square images
             inputs = self.processor(
                 videos=list(frames), 
@@ -119,11 +155,22 @@ class XCLIPEncoder:
                 crop_size={"height": self.image_size, "width": self.image_size}
             )
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            preprocessing_time = (time.time() - preprocessing_start) * 1000
             
-            video_features = self.model.get_video_features(**inputs)
+            inference_start = time.time()
+            # Use autocast for mixed precision if on CUDA
+            if self.device == "cuda":
+                with torch.cuda.amp.autocast():
+                    video_features = self.model.get_video_features(**inputs)
+            else:
+                video_features = self.model.get_video_features(**inputs)
+            inference_time = (time.time() - inference_start) * 1000
             
             # Normalize
             video_features = video_features / video_features.norm(dim=-1, keepdim=True)
+            
+            total_time = (time.time() - start_time) * 1000
+            logger.info(f"Video encoding ({num_frames} frames): {total_time:.1f}ms (extraction: {frame_extraction_time:.1f}ms, preprocessing: {preprocessing_time:.1f}ms, inference: {inference_time:.1f}ms)")
             
             # Return as numpy
             return video_features[0].cpu().numpy()
