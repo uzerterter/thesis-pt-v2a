@@ -152,16 +152,48 @@ void SoundRecommendationsComponent::handleNextClicked()
 
 void SoundRecommendationsComponent::handlePreviewClicked()
 {
+    juce::Logger::writeToLog ("[SoundRec] Preview button clicked");
+    
     auto* sound = getCurrentSound();
-    if (sound && onPreview)
-        onPreview (*sound);
+    if (!sound)
+    {
+        juce::Logger::writeToLog ("[SoundRec] ERROR: No current sound");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("[SoundRec] Current sound: ID=" + juce::String (sound->id) + ", " + sound->description);
+    
+    if (!onPreview)
+    {
+        juce::Logger::writeToLog ("[SoundRec] ERROR: onPreview callback is not set!");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("[SoundRec] Calling onPreview callback...");
+    onPreview (*sound);
 }
 
 void SoundRecommendationsComponent::handleImportClicked()
 {
+    juce::Logger::writeToLog ("[SoundRec] Import button clicked");
+    
     auto* sound = getCurrentSound();
-    if (sound && onImport)
-        onImport (*sound);
+    if (!sound)
+    {
+        juce::Logger::writeToLog ("[SoundRec] ERROR: No current sound");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("[SoundRec] Current sound: ID=" + juce::String (sound->id) + ", " + sound->description);
+    
+    if (!onImport)
+    {
+        juce::Logger::writeToLog ("[SoundRec] ERROR: onImport callback is not set!");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("[SoundRec] Calling onImport callback...");
+    onImport (*sound);
 }
 
 void SoundRecommendationsComponent::updateDisplay()

@@ -23,11 +23,15 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
     "services": {
         "mmaudio": {
             "api_url_direct": "http://localhost:8000",
-            "api_url_cloudflared": "mmaudio.linwig.de",
+            "api_url_cloudflared": "https://mmaudio.linwig.de",
         },
         "hunyuan": {
             "api_url_direct": "http://localhost:8001",
-            "api_url_cloudflared": "hyvf.linwig.de",
+            "api_url_cloudflared": "https://hyvf.linwig.de",
+        },
+        "sound_search": {
+            "api_url_direct": "http://localhost:8002",
+            "api_url_cloudflared": "https://sounds.linwig.de",
         },
     },
     "cf_access_client_id": "",
@@ -50,7 +54,7 @@ def _load_config() -> Dict[str, Any]:
             if isinstance(data, dict):
                 # Merge shallow keys, but keep nested dicts intact
                 cfg.update(data)
-                for service in ("mmaudio", "hunyuan"):
+                for service in ("mmaudio", "hunyuan", "sound_search"):
                     svc_defaults = CONFIG_DEFAULTS["services"][service]
                     cfg["services"].setdefault(service, svc_defaults.copy())
                     cfg["services"][service] = {

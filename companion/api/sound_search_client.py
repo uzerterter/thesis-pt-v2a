@@ -6,6 +6,7 @@ Supports video-based and text-based semantic search with X-CLIP embeddings.
 """
 
 import os
+import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -18,6 +19,19 @@ from .config import (
     get_cf_headers,
     use_cloudflared,
 )
+
+# Import video preprocessing from video module
+try:
+    # Try relative import first (when called as module)
+    from ..video.ffmpeg import downscale_video
+except (ImportError, ValueError):
+    try:
+        # Fallback: add parent directory to path (when called as script)
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from video.ffmpeg import downscale_video
+    except ImportError:
+        downscale_video = None
 
 # Default settings
 DEFAULT_LIMIT = 5
@@ -53,7 +67,7 @@ def check_api_health(quiet: bool = False) -> bool:
         return True
     except requests.exceptions.RequestException as e:
         if not quiet:
-            print(f"❌ Sound Search API not reachable: {e}")
+            print(f"[ERROR] Sound Search API not reachable: {e}")
         return False
 
 
@@ -98,16 +112,16 @@ def search_sounds(
     """
     if not video_path and not text_query:
         if not quiet:
-            print("❌ Must provide either video_path or text_query")
+            print("[ERROR] Must provide either video_path or text_query")
         return None
     
     if video_path and not os.path.exists(video_path):
         if not quiet:
-            print(f"❌ Video file not found: {video_path}")
+            print(f"[ERROR] Video file not found: {video_path}")
         return None
     
     if not quiet:
-        print(f"\n🔍 Searching BBC Sound Archive...")
+        print(f"\n[SEARCH] Searching BBC Sound Archive...")
         if video_path and text_query:
             print(f"   Mode: Hybrid (Video + Text)")
             print(f"   Video: {Path(video_path).name}")
@@ -122,6 +136,28 @@ def search_sounds(
         print(f"   Limit: {limit}")
         if verbose:
             print(f"   Num Frames: {num_frames}")
+    
+    # Preprocess video if provided (downscale to 480p for faster upload/processing)
+    preprocessed_video_path = None
+    if video_path:
+        if downscale_video:
+            if verbose:
+                print(f"[PREPROCESS] Downscaling video to 480p...")
+            preprocess_result = downscale_video(video_path)
+            if preprocess_result['success']:
+                preprocessed_video_path = preprocess_result['output_path']
+                if verbose:
+                    print(f"[PREPROCESS] Downscaled: {preprocess_result['original_size_mb']}MB → {preprocess_result['downscaled_size_mb']}MB")
+                    print(f"[PREPROCESS] Compression: {preprocess_result['compression_ratio']}x smaller")
+                    print(f"[PREPROCESS] Time: {preprocess_result['encoding_time']}s")
+                # Use preprocessed video for API call
+                video_path = preprocessed_video_path
+            else:
+                if verbose:
+                    print(f"[WARN] Preprocessing failed, using original video: {preprocess_result['error']}")
+        else:
+            if verbose:
+                print(f"[WARN] Video preprocessing not available (video.ffmpeg module not imported)")
     
     try:
         url = f"{get_sound_search_url()}/search/sounds"
@@ -152,17 +188,55 @@ def search_sounds(
         results = result.get('results', [])
         
         if not quiet:
-            print(f"✅ Found {len(results)} results")
+            print(f"[OK] Found {len(results)} results")
         
         return results
         
+    except requests.exceptions.Timeout as e:
+        if not quiet:
+            print(f"[ERROR] Search request timed out after 60s: {e}")
+        # Log to temp file for debugging
+        import tempfile
+        debug_log = Path(tempfile.gettempdir()) / "sound_search_client_error.log"
+        with open(debug_log, 'a') as f:
+            import datetime
+            f.write(f"[{datetime.datetime.now()}] Timeout: {e}\n")
+        return None
+    except requests.exceptions.ConnectionError as e:
+        if not quiet:
+            print(f"[ERROR] Connection failed - is the API server running on {get_sound_search_url()}?: {e}")
+        # Log to temp file for debugging
+        import tempfile
+        debug_log = Path(tempfile.gettempdir()) / "sound_search_client_error.log"
+        with open(debug_log, 'a') as f:
+            import datetime
+            f.write(f"[{datetime.datetime.now()}] ConnectionError: {e}\n")
+        return None
     except requests.exceptions.RequestException as e:
         if not quiet:
-            print(f"❌ Search failed: {e}")
+            print(f"[ERROR] Search failed: {e}")
+        # Log to temp file for debugging
+        import tempfile
+        debug_log = Path(tempfile.gettempdir()) / "sound_search_client_error.log"
+        with open(debug_log, 'a') as f:
+            import datetime
+            import traceback
+            f.write(f"[{datetime.datetime.now()}] RequestException: {e}\n")
+            f.write(traceback.format_exc())
         return None
     finally:
         if 'video' in files:
             files['video'].close()
+        
+        # Cleanup preprocessed video
+        if preprocessed_video_path and os.path.exists(preprocessed_video_path):
+            try:
+                os.remove(preprocessed_video_path)
+                if verbose:
+                    print(f"[CLEANUP] Removed preprocessed video: {Path(preprocessed_video_path).name}")
+            except Exception as e:
+                if verbose:
+                    print(f"[WARN] Failed to cleanup preprocessed video: {e}")
 
 
 def get_sound_info(sound_id: int, quiet: bool = False) -> Optional[Dict[str, Any]]:
@@ -184,7 +258,7 @@ def get_sound_info(sound_id: int, quiet: bool = False) -> Optional[Dict[str, Any
         return response.json()
     except requests.exceptions.RequestException as e:
         if not quiet:
-            print(f"❌ Failed to get sound info: {e}")
+            print(f"[ERROR] Failed to get sound info: {e}")
         return None
 
 
@@ -193,6 +267,7 @@ def download_sound(
     output_path: Optional[str] = None,
     session_id: Optional[str] = None,
     quiet: bool = False,
+    verbose: bool = False,
 ) -> Optional[str]:
     """
     Download sound file to specified path or temp directory.
@@ -202,6 +277,7 @@ def download_sound(
         output_path: Directory or file path to save to (optional)
         session_id: Session ID for organizing temp files (optional)
         quiet: Suppress output messages
+        verbose: Show detailed progress
         
     Returns:
         Full path to downloaded file, None if download fails.
@@ -216,8 +292,16 @@ def download_sound(
     """
     try:
         url = f"{get_sound_search_url()}/sounds/{sound_id}/download"
+        
+        if verbose:
+            print(f"[DOWNLOAD] Requesting: {url}")
+        
         response = requests.get(url, headers=get_cf_headers(), timeout=30)
         response.raise_for_status()
+        
+        if verbose:
+            content_length = response.headers.get('Content-Length', 'unknown')
+            print(f"[DOWNLOAD] Received {content_length} bytes")
         
         # Get filename from Content-Disposition header
         content_disp = response.headers.get('Content-Disposition', '')
@@ -248,17 +332,24 @@ def download_sound(
         
         # Write file
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        
+        if verbose:
+            print(f"[DOWNLOAD] Writing to: {output_file}")
+        
         with open(output_file, 'wb') as f:
-            f.write(response.content)
+            bytes_written = f.write(response.content)
+        
+        if verbose:
+            print(f"[DOWNLOAD] Wrote {bytes_written} bytes")
         
         if not quiet:
-            print(f"✓ Downloaded: {filename}")
+            print(f"[OK] Downloaded: {filename}")
         
         return output_file
         
     except requests.exceptions.RequestException as e:
         if not quiet:
-            print(f"❌ Download failed for sound {sound_id}: {e}")
+            print(f"[ERROR] Download failed for sound {sound_id}: {e}")
         return None
 
 
@@ -325,16 +416,21 @@ def search_and_download(
     
     # Download all sounds
     if not quiet:
-        print(f"\n📥 Downloading {len(results)} sounds...")
+        print(f"\n[DOWNLOAD] Downloading {len(results)} sounds...")
     
     enriched_results = []
-    for sound in results:
+    for i, sound in enumerate(results, 1):
         sound_id = sound['id']
+        
+        if verbose:
+            print(f"[DOWNLOAD] Sound {i}/{len(results)}: ID {sound_id}")
+        
         local_path = download_sound(
             sound_id=sound_id,
             output_path=output_path,
             session_id=session_id,
             quiet=quiet,
+            verbose=verbose,
         )
         
         if local_path:
@@ -343,10 +439,10 @@ def search_and_download(
             enriched_results.append(sound)
         else:
             if not quiet:
-                print(f"⚠️  Skipping sound {sound_id} (download failed)")
+                print(f"[WARN] Skipping sound {sound_id} (download failed)")
     
     if not quiet:
-        print(f"✅ Downloaded {len(enriched_results)}/{len(results)} sounds")
+        print(f"[OK] Downloaded {len(enriched_results)}/{len(results)} sounds")
     
     return enriched_results if enriched_results else None
 
@@ -372,9 +468,9 @@ def cleanup_session(session_id: str, quiet: bool = False) -> bool:
     try:
         shutil.rmtree(session_dir)
         if not quiet:
-            print(f"🧹 Cleaned up session: {session_id}")
+            print(f"[OK] Cleaned up session: {session_id}")
         return True
     except Exception as e:
         if not quiet:
-            print(f"⚠️  Failed to clean up session {session_id}: {e}")
+            print(f"[WARN] Failed to clean up session {session_id}: {e}")
         return False

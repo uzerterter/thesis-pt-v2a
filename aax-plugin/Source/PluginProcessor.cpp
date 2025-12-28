@@ -23,10 +23,25 @@ PtV2AProcessor::PtV2AProcessor()
     // Initialize file logger on first plugin instance
     // This ensures logs are captured from plugin startup
     initializeLogger();
+    
+    // TASK 7: Initialize audio format manager for preview playback
+    // Register basic formats (WAV, AIFF, FLAC, MP3)
+    formatManager.registerBasicFormats();
 }
 
-void PtV2AProcessor::prepareToPlay (double /*sampleRate*/, int /*samplesPerBlock*/) {}
-void PtV2AProcessor::releaseResources() {}
+void PtV2AProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    // TASK 7: Prepare preview transport for playback
+    previewTransport.prepareToPlay (samplesPerBlock, sampleRate);
+    
+    // Allocate preview mix buffer (stereo)
+    previewMixBuffer.setSize (2, samplesPerBlock);
+}
+void PtV2AProcessor::releaseResources()
+{
+    // TASK 7: Release preview transport resources
+    previewTransport.releaseResources();
+}
 
 bool PtV2AProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -39,8 +54,28 @@ bool PtV2AProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 
 void PtV2AProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midi*/)
 {
-    // Pass-through: do not modify audio
-    juce::ignoreUnused (buffer);
+    // Pass-through: do not modify audio from input
+    // (Plugin does not process real-time audio)
+    
+    // TASK 7: Mix preview audio if active
+    if (previewTransport.isPlaying())
+    {
+        // Ensure preview buffer matches block size
+        if (previewMixBuffer.getNumSamples() != buffer.getNumSamples())
+            previewMixBuffer.setSize (2, buffer.getNumSamples(), false, false, true);
+        
+        previewMixBuffer.clear();
+        
+        // Get preview audio from transport
+        juce::AudioSourceChannelInfo channelInfo (&previewMixBuffer, 0, buffer.getNumSamples());
+        previewTransport.getNextAudioBlock (channelInfo);
+        
+        // Mix preview into output buffer (additive mixing)
+        for (int channel = 0; channel < juce::jmin (buffer.getNumChannels(), previewMixBuffer.getNumChannels()); ++channel)
+        {
+            buffer.addFrom (channel, 0, previewMixBuffer, channel, 0, buffer.getNumSamples(), 0.7f);  // 70% preview volume
+        }
+    }
 }
 
 juce::AudioProcessorEditor* PtV2AProcessor::createEditor()
@@ -1085,10 +1120,10 @@ juce::String PtV2AProcessor::getVideoFileFromProTools(juce::String* errorMessage
         return juce::String();
     }
     
-    // Build command: python standalone_api_client.py --action get_video_file
+    // Use get_video_info action (same as V2A workflow - faster and more reliable)
     juce::String command = "\"" + pythonExe + "\" ";
     command += "\"" + scriptFile.getFullPathName() + "\" ";
-    command += "--action get_video_file";
+    command += "--action get_video_info";
     
     juce::Logger::writeToLog ("Executing video file lookup command...");
     juce::Logger::writeToLog ("Command: " + command);
@@ -1105,22 +1140,41 @@ juce::String PtV2AProcessor::getVideoFileFromProTools(juce::String* errorMessage
         return juce::String();
     }
     
-    // Wait for completion (PTSL calls can take 1-2 seconds)
-    if (!process.waitForProcessToFinish (10000))  // 10 second timeout
+    juce::Logger::writeToLog ("Process started, waiting for completion...");
+    
+    // Wait for completion (first PTSL connection can be slow - 20s timeout)
+    if (!process.waitForProcessToFinish (20000))  // 20 second timeout
     {
-        juce::String errorMsg = "Video file lookup timed out";
+        juce::String errorMsg = "Video file lookup timed out after 20s";
         juce::Logger::writeToLog ("ERROR: " + errorMsg);
+        juce::Logger::writeToLog ("PTSL may be slow to connect on first call");
         process.kill();
         if (errorMessage != nullptr)
-            *errorMessage = errorMsg;
+            *errorMessage = errorMsg + " (PTSL connection may be slow)";
         return juce::String();
     }
     
+    int exitCode = process.getExitCode();
+    juce::Logger::writeToLog ("Process completed with exit code: " + juce::String (exitCode));
+    
     // Read output
     auto output = process.readAllProcessOutput().trim();
-    juce::Logger::writeToLog ("Python output: " + output);
+    juce::Logger::writeToLog ("Python output length: " + juce::String (output.length()) + " chars");
     
-    // Parse JSON response
+    if (output.length() > 1000)
+    {
+        juce::Logger::writeToLog ("Python output (first 1000 chars): " + output.substring (0, 1000));
+    }
+    else if (!output.isEmpty())
+    {
+        juce::Logger::writeToLog ("Python output: " + output);
+    }
+    else
+    {
+        juce::Logger::writeToLog ("WARNING: Empty output from Python process");
+    }
+    
+    // Parse JSON response (get_video_info returns combined timeline + video data)
     auto json = juce::JSON::parse (output);
     if (auto* obj = json.getDynamicObject())
     {
@@ -1639,6 +1693,69 @@ bool PtV2AProcessor::testCloudflareCredentials (const juce::String& clientId,
     if (errorMessage != nullptr)
         *errorMessage = errorMsg;
     return false;
+}
+
+//==============================================================================
+// Sound Preview System Implementation (TASK 7)
+//==============================================================================
+
+bool PtV2AProcessor::startSoundPreview (const juce::String& audioPath)
+{
+    juce::Logger::writeToLog ("=== Starting Sound Preview ===");
+    juce::Logger::writeToLog ("Audio file: " + audioPath);
+    
+    // Stop any existing preview
+    stopSoundPreview();
+    
+    // Check if file exists
+    juce::File audioFile (audioPath);
+    if (!audioFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: Audio file not found: " + audioPath);
+        return false;
+    }
+    
+    // Create reader for audio file
+    auto* reader = formatManager.createReaderFor (audioFile);
+    if (reader == nullptr)
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to create audio reader for: " + audioPath);
+        return false;
+    }
+    
+    // Create reader source (takes ownership of reader)
+    previewSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
+    
+    // Connect to transport
+    previewTransport.setSource (previewSource.get(), 0, nullptr, reader->sampleRate);
+    
+    // Start playback
+    previewTransport.start();
+    
+    juce::Logger::writeToLog ("✓ Sound preview started");
+    juce::Logger::writeToLog ("   Sample rate: " + juce::String (reader->sampleRate) + " Hz");
+    juce::Logger::writeToLog ("   Channels: " + juce::String (reader->numChannels));
+    juce::Logger::writeToLog ("   Length: " + juce::String (reader->lengthInSamples / reader->sampleRate, 2) + "s");
+    
+    return true;
+}
+
+void PtV2AProcessor::stopSoundPreview()
+{
+    if (previewTransport.isPlaying())
+    {
+        juce::Logger::writeToLog ("Stopping sound preview");
+        previewTransport.stop();
+    }
+    
+    // Release resources
+    previewTransport.setSource (nullptr);
+    previewSource.reset();
+}
+
+bool PtV2AProcessor::isSoundPreviewPlaying() const
+{
+    return previewTransport.isPlaying();
 }
 
 //==============================================================================

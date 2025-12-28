@@ -73,6 +73,7 @@ juce_add_plugin(pt_v2a
 target_sources(pt_v2a PRIVATE         # only for this target
     Source/PluginProcessor.cpp        # Audio processing and business logic
     Source/PluginEditor.cpp           # GUI implementation
+    Source/SoundRecommendationsComponent.cpp  # Sound library UI component (TASK 6)
 )
 
 # ==============================================================================
@@ -96,6 +97,9 @@ add_custom_command(TARGET pt_v2a_AAX PRE_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${COMPANION_DIR}/hunyuanvideo_foley_api_client.py
         ${RESOURCES_PYTHON_SCRIPTS}/hunyuanvideo_foley_api_client.py
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${COMPANION_DIR}/sound_search_api_client.py
+        ${RESOURCES_PYTHON_SCRIPTS}/sound_search_api_client.py
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${COMPANION_DIR}/ptsl_integration
         ${RESOURCES_PYTHON_SITEPACKAGES}/ptsl_integration
@@ -141,6 +145,8 @@ target_compile_definitions(pt_v2a PRIVATE
 # ==============================================================================
 target_link_libraries(pt_v2a PRIVATE
     juce::juce_audio_processors       # Core audio plugin framework
+    juce::juce_audio_formats          # Audio file I/O (WAV, MP3, FLAC) - TASK 7
+    juce::juce_audio_devices          # Audio I/O and transport - TASK 7
     juce::juce_gui_basics             # Basic GUI components
     juce::juce_gui_extra              # Extended GUI features (for rich UI)
 )

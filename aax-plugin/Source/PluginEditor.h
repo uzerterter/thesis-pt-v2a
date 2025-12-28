@@ -125,6 +125,18 @@ private:
     SoundRecommendationsComponent soundRecommendations;
     
     /**
+     * Button to manually trigger sound recommendations search
+     * Searches BBC Sound Archive for sounds matching video and prompt
+     */
+    juce::TextButton recommendSoundsButton { "Recommend Sounds" };
+    
+    /**
+     * Toggle button to show/hide sound recommendations
+     * Only appears when search results are available
+     */
+    juce::TextButton toggleSoundResultsButton { "Show Database Sounds" };
+    
+    /**
      * Label for video clip offset input (deprecated TODO remove in future)
      */
    // juce::Label videoOffsetLabel { {}, "Video Clip Start (to be removed):" };
@@ -310,6 +322,7 @@ private:
      * @param sound The sound to import
      */
     void handleSoundImport (const SoundResult& sound);
+    void startSoundImportProcess (const SoundResult& sound, const juce::String& timecode);
     
     /**
      * Show Cloudflare Access credential dialog
@@ -414,17 +427,55 @@ private:
     float getSourceVideoDuration (const juce::String& videoPath);
     
     //==============================================================================
+    // Sound Search Integration
+    //==============================================================================
+    
+    /**
+     * Trigger sound search after successful audio generation.
+     * Searches BBC Sound Archive for sounds matching video and prompt.
+     * Results are displayed in SoundRecommendationsComponent.
+     * 
+     * @param videoPath Path to video file (optional, can be empty for T2A)
+     * @param prompt Text prompt used for generation
+     */
+    void triggerSoundSearch (const juce::String& videoPath, const juce::String& prompt);
+    
+    /**
+     * Handle sound search completion (called from timer or async callback).
+     * Parses JSON response and populates SoundRecommendationsComponent.
+     * 
+     * @param output Raw JSON output from sound_search_api_client.py
+     */
+    void handleSoundSearchResult (const juce::String& output);
+    
+    /**
+     * Toggle visibility of sound recommendations component.
+     * Shows/hides the results panel and updates button text.
+     */
+    void handleToggleSoundResults();
+    
+    /**
+     * Handle "Recommend Sounds" button click.
+     * Manually triggers sound search using current video and prompt.
+     */
+    void handleRecommendSoundsButtonClicked();
+    
+    //==============================================================================
     // Async State
     //==============================================================================
     
     /** Current async operation state */
     enum class AsyncState
     {
-        Idle,                    // No operation in progress
-        ReadingTimeline,         // Reading timeline selection via PTSL
-        ReadingClipBounds,       // Reading clip boundaries via PTSL (for auto-trim detection)
-        GeneratingAudio,         // Python generating audio (polling for output file)
-        ImportingAudio          // Importing audio to Pro Tools via PTSL
+        Idle,                           // No operation in progress
+        ReadingTimeline,                // Reading timeline selection via PTSL (for audio generation)
+        ReadingTimelineForSoundSearch,  // Reading timeline selection via PTSL (for sound search)
+        ReadingTimelineForSoundImport,  // Reading timeline selection via PTSL (before sound import)
+        ReadingClipBounds,              // Reading clip boundaries via PTSL (for auto-trim detection)
+        GeneratingAudio,                // Python generating audio (polling for output file)
+        SearchingSounds,                // Python searching sounds (polling for JSON output)
+        ImportingAudio,                 // Importing generated audio to Pro Tools via PTSL
+        ImportingSoundFX                // Importing sound library audio to Pro Tools via PTSL
     };
     
     AsyncState currentAsyncState = AsyncState::Idle;
@@ -432,11 +483,23 @@ private:
     /** PTSL process handle (for async timeline selection and import) */
     std::unique_ptr<juce::ChildProcess> ptslProcess;
     
+    /** Sound search process handle (kept alive during search, no stdout reading) */
+    std::unique_ptr<juce::ChildProcess> soundSearchProcess;
+    
+    /** Sound import process handle (for importing BBC sounds to timeline) */
+    std::unique_ptr<juce::ChildProcess> soundImportProcess;
+    
+    /** Time when sound search started (for timeout and polling) */
+    juce::Time soundSearchStartTime;
+    
     /** Time when current async operation started (for timeout detection) */
     juce::Time asyncOperationStartTime;
     
     /** Expected output file path (for audio generation polling) */
     juce::String expectedAudioOutputPath;
+    
+    /** Expected sound search output JSON file path (for file polling) */
+    juce::String expectedSoundSearchOutputPath;
     
     /** Video path and prompt (stored for generation process) */
     juce::String currentVideoPath;
@@ -444,6 +507,9 @@ private:
     
     /** Timeline selection timecode (stored for audio import positioning) */
     juce::String timelineInTime;  // e.g., "00:00:07:00"
+    
+    /** Pending sound import (stored while reading timeline position) */
+    SoundResult pendingSoundImport;
     
     /** Timeline selection in seconds (for video trimming calculations) */
     float timelineInSeconds = 0.0f;

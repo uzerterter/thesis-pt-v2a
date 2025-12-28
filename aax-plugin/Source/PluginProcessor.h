@@ -1,5 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_formats/juce_audio_formats.h>  // TASK 7: Audio format I/O for preview
+#include <juce_audio_devices/juce_audio_devices.h>  // TASK 7: AudioTransportSource for preview
 
 /**
  * @class PtV2AProcessor
@@ -471,6 +473,30 @@ public:
         juce::String* errorMessage = nullptr
     );
 
+    //==============================================================================
+    // Sound Preview System (TASK 7)
+    //==============================================================================
+    
+    /**
+     * Start playing audio preview (plugin-internal, system audio output).
+     * Preview runs parallel to Pro Tools audio engine - no timeline interference.
+     * 
+     * @param audioPath Path to audio file to preview (.wav, .mp3, .flac, etc.)
+     * @return true if preview started successfully, false on error
+     */
+    bool startSoundPreview (const juce::String& audioPath);
+    
+    /**
+     * Stop currently playing audio preview.
+     */
+    void stopSoundPreview();
+    
+    /**
+     * Check if audio preview is currently playing.
+     * @return true if preview is active
+     */
+    bool isSoundPreviewPlaying() const;
+
 private:
     //==============================================================================
     // Private Members
@@ -485,6 +511,22 @@ private:
     //   - juce::String lastNegativePrompt;
     //   - int lastSeed;
     //   - juce::File lastVideoFile;
+    
+    //==============================================================================
+    // Audio Preview System (Private Members)
+    //==============================================================================
+    
+    /** Audio format manager for loading preview files */
+    juce::AudioFormatManager formatManager;
+    
+    /** Transport source for preview playback control */
+    juce::AudioTransportSource previewTransport;
+    
+    /** Reader source for current preview audio file */
+    std::unique_ptr<juce::AudioFormatReaderSource> previewSource;
+    
+    /** Mixing buffer for combining preview with plugin audio */
+    juce::AudioBuffer<float> previewMixBuffer;
     
     //==============================================================================
     // Private Helper Methods

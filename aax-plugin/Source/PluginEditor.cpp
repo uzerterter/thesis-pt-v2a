@@ -139,6 +139,18 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
     addAndMakeVisible (modelSizeComboBox);
 
+    // Configure recommend sounds button
+    recommendSoundsButton.onClick = [this] { handleRecommendSoundsButtonClicked(); };
+    addAndMakeVisible (recommendSoundsButton);
+    
+    // Configure toggle button for sound recommendations
+    toggleSoundResultsButton.onClick = [this] { handleToggleSoundResults(); };
+    toggleSoundResultsButton.setVisible (false);  // Initially hidden until results available
+    addAndMakeVisible (toggleSoundResultsButton);
+    
+    // Sound recommendations initially hidden
+    soundRecommendations.setVisible (false);
+    
     // Set fixed window size (not resizable in Pro Tools)
     // Pro Tools plugins typically have fixed UI layouts
     setResizable (true, true);
@@ -389,24 +401,30 @@ void PtV2AEditor::resized()
     auto buttonRow = r.removeFromTop (28);
 
     const int renderW   = 160;
-    const int dummyW    = 200;
+    const int recommendW = 160;
     const int openLogW  = 120;
-    const int gap1      = 20;  // between render and dummy
-    const int gap2      = 20;  // between dummy and openLog
+    const int gap1      = 20;  // between render and recommend
+    const int gap2      = 20;  // between recommend and openLog
 
-    const int totalWidth = renderW + gap1 + dummyW + gap2 + openLogW;
+    const int totalWidth = renderW + gap1 + recommendW + gap2 + openLogW;
     int startX = buttonRow.getX() + juce::jmax (0, (buttonRow.getWidth() - totalWidth) / 2);
     int y = buttonRow.getY();
     int h = buttonRow.getHeight();
 
     renderButton.setBounds (startX, y, renderW, h);
     startX += renderW + gap1;
-    // renderDummyButton.setBounds (startX, y, dummyW, h); // (deprecated TODO remove in future)
-    startX += dummyW + gap2;
+    recommendSoundsButton.setBounds (startX, y, recommendW, h);
+    startX += recommendW + gap2;
     openLogButton.setBounds (startX, y, openLogW, h);
 
-    // Sound recommendations component - placed below render button (only visible when results available)
+    // Toggle button for sound recommendations - placed below render button
     r.removeFromTop (15);  // Spacing
+    auto toggleButtonRow = r.removeFromTop (28);
+    toggleButtonRow.removeFromLeft ((toggleButtonRow.getWidth() - 200) / 2);  // Center
+    toggleSoundResultsButton.setBounds (toggleButtonRow.removeFromLeft (200));
+    
+    // Sound recommendations component - shown when toggle is active
+    r.removeFromTop (10);  // Spacing
     auto soundRecommendationsArea = r.removeFromTop (140);  // Fixed height for component
     soundRecommendations.setBounds (soundRecommendationsArea);
 
@@ -633,6 +651,227 @@ void PtV2AEditor::timerCallback()
             break;
         }
         
+        case AsyncState::ReadingTimelineForSoundSearch:
+        {
+            // Same as ReadingTimeline but triggers sound search instead of audio generation
+            if (!ptslProcess)
+            {
+                stopTimer();
+                currentAsyncState = AsyncState::Idle;
+                recommendSoundsButton.setEnabled (true);
+                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                return;
+            }
+            
+            // Check for timeout
+            if (elapsed.inMilliseconds() > PTSL_TIMEOUT_MS)
+            {
+                juce::Logger::writeToLog ("ERROR: Timeline selection timed out after " + 
+                                          juce::String (PTSL_TIMEOUT_MS) + "ms");
+                
+                stopTimer();
+                ptslProcess->kill();
+                ptslProcess.reset();
+                currentAsyncState = AsyncState::Idle;
+                
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Timeout",
+                    "Timeline selection timed out for sound search.\n\n"
+                    "Please check PTSL connection.",
+                    "OK"
+                );
+                
+                recommendSoundsButton.setEnabled (true);
+                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                return;
+            }
+            
+            // Check if process is still running
+            if (ptslProcess->isRunning())
+            {
+                return;  // Keep waiting
+            }
+            
+            // Process finished - read output
+            juce::Logger::writeToLog ("Timeline selection for sound search finished after " + 
+                                      juce::String (elapsed.inMilliseconds()) + "ms");
+            
+            auto output = ptslProcess->readAllProcessOutput();
+            ptslProcess.reset();
+            stopTimer();
+            currentAsyncState = AsyncState::Idle;
+            
+            // Parse JSON to get video path
+            auto lines = juce::StringArray::fromLines (output);
+            juce::String jsonOutput;
+            for (const auto& line : lines)
+            {
+                if (line.trimStart().startsWith ("{"))
+                {
+                    jsonOutput = line.trim();
+                    break;
+                }
+            }
+            
+            juce::String videoPath;
+            if (jsonOutput.isNotEmpty())
+            {
+                auto json = juce::JSON::parse (jsonOutput);
+                if (auto* obj = json.getDynamicObject())
+                {
+                    bool success = obj->getProperty ("success");
+                    if (success)
+                    {
+                        videoPath = obj->getProperty ("video_path").toString();
+                        juce::Logger::writeToLog ("Video path from PTSL: " + videoPath);
+                        
+                        // Store timeline position for sound import (same as V2A/T2A)
+                        juce::String inTime = obj->getProperty ("in_time").toString();
+                        if (inTime.isNotEmpty())
+                        {
+                            timelineInTime = inTime;
+                            juce::Logger::writeToLog ("Stored timeline in-time for sound import: " + timelineInTime);
+                        }
+                    }
+                    else
+                    {
+                        juce::String error = obj->getProperty ("error").toString();
+                        bool noSelection = error.contains ("No clips selected");
+                        
+                        if (noSelection)
+                        {
+                            juce::Logger::writeToLog ("No video selected - using text-only search");
+                        }
+                        else
+                        {
+                            juce::Logger::writeToLog ("PTSL error: " + error);
+                            juce::AlertWindow::showMessageBoxAsync (
+                                juce::MessageBoxIconType::WarningIcon,
+                                "Video Error",
+                                error,
+                                "OK"
+                            );
+                            recommendSoundsButton.setEnabled (true);
+                            recommendSoundsButton.setButtonText ("Recommend Sounds");
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            // Validate: need at least video OR text
+            if (videoPath.isEmpty() && currentPrompt.isEmpty())
+            {
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "No Input",
+                    "No video or text prompt available for sound search.",
+                    "OK"
+                );
+                recommendSoundsButton.setEnabled (true);
+                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                return;
+            }
+            
+            // Trigger sound search with video + prompt
+            // Button will be re-enabled after search completes in SearchingSounds state
+            triggerSoundSearch (videoPath, currentPrompt);
+            
+            break;
+        }
+        
+        case AsyncState::ReadingTimelineForSoundImport:
+        {
+            // Reading timeline position for sound import (before actual import)
+            if (!ptslProcess)
+            {
+                stopTimer();
+                currentAsyncState = AsyncState::Idle;
+                juce::Logger::writeToLog ("ERROR: PTSL process lost during timeline read for sound import");
+                return;
+            }
+            
+            // Check for timeout (30 seconds for timeline read)
+            if (elapsed.inMilliseconds() > 30000)
+            {
+                juce::Logger::writeToLog ("ERROR: Timeline read for sound import timed out after 30s");
+                
+                stopTimer();
+                ptslProcess->kill();
+                ptslProcess.reset();
+                currentAsyncState = AsyncState::Idle;
+                
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Timeout",
+                    "Could not read timeline position.\n\n"
+                    "Importing at session start instead.",
+                    "OK"
+                );
+                
+                // Fallback: Import at default position
+                startSoundImportProcess (pendingSoundImport, "");
+                return;
+            }
+            
+            // Check if process is still running
+            if (ptslProcess->isRunning())
+            {
+                return;  // Keep waiting
+            }
+            
+            // Process finished - read output
+            juce::Logger::writeToLog ("Timeline read for sound import finished after " + 
+                                      juce::String (elapsed.inMilliseconds()) + "ms");
+            
+            auto output = ptslProcess->readAllProcessOutput();
+            juce::Logger::writeToLog ("Timeline output: " + output);
+            
+            ptslProcess.reset();
+            stopTimer();
+            currentAsyncState = AsyncState::Idle;
+            
+            // Parse JSON to get in_time
+            auto lines = juce::StringArray::fromLines (output);
+            juce::String jsonOutput;
+            for (const auto& line : lines)
+            {
+                if (line.trimStart().startsWith ("{"))
+                {
+                    jsonOutput = line.trim();
+                    break;
+                }
+            }
+            
+            juce::String currentTimecode;
+            if (jsonOutput.isNotEmpty())
+            {
+                auto json = juce::JSON::parse (jsonOutput);
+                if (auto* obj = json.getDynamicObject())
+                {
+                    // For sound import, we only need timeline position (edit cursor), not a video clip
+                    // So extract in_time even if success=false (which means no video clip selected)
+                    currentTimecode = obj->getProperty ("in_time").toString();
+                    
+                    if (currentTimecode.isNotEmpty() && currentTimecode != "00:00:00:00")
+                    {
+                        juce::Logger::writeToLog ("Current timeline position: " + currentTimecode);
+                    }
+                    else
+                    {
+                        juce::Logger::writeToLog ("No valid timeline position, using session start");
+                        currentTimecode = "";  // Explicitly clear for session start
+                    }
+                }
+            }
+            
+            // Now start the actual import with current timeline position
+            startSoundImportProcess (pendingSoundImport, currentTimecode);
+            
+            break;
+        }
+        
         case AsyncState::ReadingClipBounds:
         {
             // Safety check
@@ -684,6 +923,74 @@ void PtV2AEditor::timerCallback()
         {
             // Poll for output file existence
             checkAudioGenerationComplete();
+            break;
+        }
+        
+        case AsyncState::SearchingSounds:
+        {
+            // Poll for sound search output file (fire-and-forget process, no ChildProcess to manage)
+            // Check for timeout (80 seconds for video preprocessing + X-CLIP + downloads)
+            if (elapsed.inMilliseconds() > 80000)
+            {
+                juce::Logger::writeToLog ("ERROR: Sound search timed out after 80s");
+                
+                stopTimer();
+                currentAsyncState = AsyncState::Idle;
+                
+                // Cleanup output file if exists
+                juce::File outputFile (expectedSoundSearchOutputPath);
+                if (outputFile.existsAsFile())
+                    outputFile.deleteFile();
+                
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Sound Search Timeout",
+                    "Sound search timed out after 80 seconds.\n\n"
+                    "This may be due to:\n"
+                    "- Large video files\n"
+                    "- Slow X-CLIP processing\n"
+                    "- Network issues during sound downloads",
+                    "OK"
+                );
+                
+                recommendSoundsButton.setEnabled (true);
+                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                return;
+            }
+            
+            // Check if output file exists (non-blocking file check)
+            juce::File outputFile (expectedSoundSearchOutputPath);
+            
+            if (!outputFile.existsAsFile())
+            {
+                // Still processing, log progress every 5 seconds
+                if ((elapsed.inMilliseconds() / 1000) % 5 == 0 && (elapsed.inMilliseconds() % 1000) < TIMER_INTERVAL_MS)
+                {
+                    juce::Logger::writeToLog ("Sound search still running... (" + 
+                                              juce::String (elapsed.inSeconds(), 1) + "s elapsed)");
+                }
+                return;  // Keep polling
+            }
+            
+            // Output file found! Read results
+            juce::Logger::writeToLog ("Sound search completed after " + 
+                                      juce::String (elapsed.inSeconds(), 1) + "s");
+            juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
+            
+            auto jsonText = outputFile.loadFileAsString();
+            
+            stopTimer();
+            currentAsyncState = AsyncState::Idle;
+            
+            // Re-enable button
+            recommendSoundsButton.setEnabled (true);
+            recommendSoundsButton.setButtonText ("Recommend Sounds");
+            
+            // Handle results
+            handleSoundSearchResult (jsonText);
+            
+            // Cleanup output file
+            outputFile.deleteFile();
             break;
         }
         
@@ -741,6 +1048,83 @@ void PtV2AEditor::timerCallback()
             
             // Handle import result
             handleAudioImportResult (output);
+            break;
+        }
+        
+        case AsyncState::ImportingSoundFX:
+        {
+            // Sound library import to 'Sound FX' track (same pattern as ImportingAudio)
+            
+            // Safety check
+            if (!ptslProcess)
+            {
+                stopTimer();
+                currentAsyncState = AsyncState::Idle;
+                return;
+            }
+            
+            // Check for timeout (60s same as audio import)
+            if (elapsed.inMilliseconds() > PTSL_TIMEOUT_MS)
+            {
+                juce::Logger::writeToLog ("ERROR: Sound import timed out after " + 
+                                          juce::String (PTSL_TIMEOUT_MS) + "ms");
+                
+                stopTimer();
+                ptslProcess->kill();
+                ptslProcess.reset();
+                currentAsyncState = AsyncState::Idle;
+                
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Sound Import Timeout",
+                    "Sound import to Pro Tools timed out.\n\n"
+                    "The import process did not complete within 60 seconds.",
+                    "OK"
+                );
+                
+                return;
+            }
+            
+            // Check if process is still running
+            if (ptslProcess->isRunning())
+            {
+                // Still running - keep waiting
+                return;
+            }
+            
+            // Process finished!
+            juce::Logger::writeToLog ("Sound import finished after " + 
+                                      juce::String (elapsed.inMilliseconds()) + "ms");
+            
+            auto output = ptslProcess->readAllProcessOutput();
+            ptslProcess.reset();
+            
+            stopTimer();
+            currentAsyncState = AsyncState::Idle;
+            
+            juce::Logger::writeToLog ("Sound import output:");
+            juce::Logger::writeToLog (output);
+            
+            // Parse output (look for success indicator)
+            bool success = output.contains ("success") && output.contains ("true");
+            
+            if (success)
+            {
+                juce::Logger::writeToLog ("✅ Sound imported successfully to 'Sound FX' track");
+            }
+            else
+            {
+                juce::Logger::writeToLog ("⚠ Sound import may have failed - check output");
+                
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Import Issue",
+                    "Sound import completed but may have encountered issues.\n\n"
+                    "Check the Pro Tools session to verify the sound was imported.",
+                    "OK"
+                );
+            }
+            
             break;
         }
         
@@ -1535,6 +1919,9 @@ void PtV2AEditor::checkAudioGenerationComplete()
         
         stopTimer();
         renderButton.setButtonText ("Importing Audio...");
+        
+        // Sound search now triggered manually via "Recommend Sounds" button
+        
         startAudioImport (expectedAudioOutputPath);
         return;
     }
@@ -1566,6 +1953,9 @@ void PtV2AEditor::checkAudioGenerationComplete()
         
         stopTimer();
         renderButton.setButtonText ("Importing Audio...");
+        
+        // Sound search now triggered manually via "Recommend Sounds" button
+        
         startAudioImport (newestWavFile.getFullPathName());
     }
     else
@@ -1903,18 +2293,35 @@ void PtV2AEditor::handleSoundPreview (const SoundResult& sound)
     juce::Logger::writeToLog ("Description: " + sound.description);
     juce::Logger::writeToLog ("Local Path: " + sound.localPath);
     
-    // TODO: Implement audio preview playback using JUCE AudioFormatManager
-    // For now, show info dialog
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::InfoIcon,
-        "Preview Sound",
-        "Preview functionality coming soon!\n\n"
-        "Sound: " + sound.description + "\n"
-        "Category: " + sound.category + "\n"
-        "Similarity: " + juce::String (sound.similarity, 3) + "\n"
-        "File: " + sound.filename,
-        "OK"
-    );
+    // TASK 7: Implement audio preview playback
+    if (processor.isSoundPreviewPlaying())
+    {
+        // Stop if already playing (toggle behavior)
+        processor.stopSoundPreview();
+        juce::Logger::writeToLog ("Preview stopped (toggle)");
+    }
+    else
+    {
+        // Start preview
+        bool success = processor.startSoundPreview (sound.localPath);
+        
+        if (!success)
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "Preview Failed",
+                "Could not play audio preview.\n\n"
+                "File: " + sound.filename + "\n"
+                "Path: " + sound.localPath + "\n\n"
+                "Check the log file for details.",
+                "OK"
+            );
+        }
+        else
+        {
+            juce::Logger::writeToLog ("✓ Preview started successfully");
+        }
+    }
 }
 
 void PtV2AEditor::handleSoundImport (const SoundResult& sound)
@@ -1924,17 +2331,459 @@ void PtV2AEditor::handleSoundImport (const SoundResult& sound)
     juce::Logger::writeToLog ("Description: " + sound.description);
     juce::Logger::writeToLog ("Local Path: " + sound.localPath);
     
-    // TODO: Implement import to Pro Tools timeline (similar to T2A import mechanism)
-    // Use processor's importAudioToTimeline() or similar function
-    // For now, show info dialog
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::InfoIcon,
-        "Import Sound",
-        "Import functionality coming soon!\n\n"
-        "This will import the sound to your Pro Tools timeline\n"
-        "at the current playhead position.\n\n"
-        "Sound: " + sound.description + "\n"
-        "File: " + sound.localPath,
-        "OK"
-    );
+    // TASK 8: Import sound to Pro Tools timeline
+    // Verify file exists
+    juce::File audioFile (sound.localPath);
+    if (!audioFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: Sound file not found: " + sound.localPath);
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "File Not Found",
+            "Sound file not found:\n\n" + sound.localPath + "\n\n"
+            "The file may have been deleted or moved.",
+            "OK"
+        );
+        return;
+    }
+    
+    // Store sound for after reading timeline position
+    pendingSoundImport = sound;
+    
+    // First, read current timeline position (same pattern as V2A/T2A import)
+    juce::Logger::writeToLog ("Reading current timeline position before import...");
+    
+    // Get Python executable and script
+    auto pythonExe = processor.getPythonExecutable();
+    auto scriptFile = processor.getAPIClientScript();
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: API client script not found");
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Script Error",
+            "API client script not found.\n\n"
+            "Cannot read timeline position.",
+            "OK"
+        );
+        return;
+    }
+    
+    // Build timeline reading command (get_video_info action)
+    juce::StringArray commandArray;
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");
+    commandArray.add (scriptFile.getFullPathName());
+    commandArray.add ("--action");
+    commandArray.add ("get_video_info");
+    
+    juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
+    
+    // Start PTSL timeline reading process
+    ptslProcess = std::make_unique<juce::ChildProcess>();
+    
+    if (!ptslProcess->start (commandArray))
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start timeline reading process");
+        ptslProcess.reset();
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Timeline Read Error",
+            "Failed to read timeline position.\n\n"
+            "Importing at session start instead.",
+            "OK"
+        );
+        // Fallback: Import at default position
+        startSoundImportProcess (sound, "");
+        return;
+    }
+    
+    juce::Logger::writeToLog ("✓ Timeline reading process started");
+    
+    // Set async state and start polling for timeline info
+    currentAsyncState = AsyncState::ReadingTimelineForSoundImport;
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    
+    // Start timer if not already running
+    if (!isTimerRunning())
+        startTimer (TIMER_INTERVAL_MS);
+    
+    juce::Logger::writeToLog ("Timeline reading polling started...");
+}
+
+void PtV2AEditor::startSoundImportProcess (const SoundResult& sound, const juce::String& timecode)
+{
+    juce::Logger::writeToLog ("=== Starting Sound Import Process ===");
+    juce::Logger::writeToLog ("Sound: " + sound.description);
+    juce::Logger::writeToLog ("Timecode: " + (timecode.isEmpty() ? "(session start)" : timecode));
+    
+    // Get Python executable and script
+    auto pythonExe = processor.getPythonExecutable();
+    auto scriptFile = processor.getAPIClientScript();
+    
+    // Build import command
+    juce::StringArray commandArray;
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");
+    commandArray.add (scriptFile.getFullPathName());
+    commandArray.add ("--action");
+    commandArray.add ("import_audio");
+    commandArray.add ("--audio-path");
+    commandArray.add (sound.localPath);
+    
+    // Add timecode if provided (from current timeline position)
+    if (timecode.isNotEmpty())
+    {
+        commandArray.add ("--timecode");
+        commandArray.add (timecode);
+        juce::Logger::writeToLog ("Import position: " + timecode);
+    }
+    else
+    {
+        juce::Logger::writeToLog ("No timeline position, importing at session start");
+    }
+    
+    juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
+    
+    // Start import process
+    soundImportProcess = std::make_unique<juce::ChildProcess>();
+    
+    if (!soundImportProcess->start (commandArray))
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start import process");
+        soundImportProcess.reset();
+        currentAsyncState = AsyncState::Idle;
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Import Failed",
+            "Failed to start import process.\n\n"
+            "Sound: " + sound.description,
+            "OK"
+        );
+        return;
+    }
+    
+    juce::Logger::writeToLog ("✓ Sound import process started");
+    
+    // Set async state and start polling for completion
+    currentAsyncState = AsyncState::ImportingSoundFX;
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    
+    // Move soundImportProcess to ptslProcess for polling
+    ptslProcess = std::move(soundImportProcess);
+    
+    // Start timer if not already running
+    if (!isTimerRunning())
+        startTimer (TIMER_INTERVAL_MS);
+    
+    juce::Logger::writeToLog ("Sound import polling started...");
+}
+
+//==============================================================================
+// Sound Search Integration (TASK 6)
+//==============================================================================
+
+void PtV2AEditor::triggerSoundSearch (const juce::String& videoPath, const juce::String& prompt)
+{
+    juce::Logger::writeToLog ("=== Triggering Sound Search ===");
+    juce::Logger::writeToLog ("Video: " + (videoPath.isEmpty() ? "none (T2A mode)" : videoPath));
+    juce::Logger::writeToLog ("Prompt: " + prompt);
+    
+    // Get Python executable and sound search script
+    auto pythonExe = processor.getPythonExecutable();
+    auto scriptFile = processor.getAPIClientScript();
+    
+    juce::Logger::writeToLog ("Python exe: " + pythonExe);
+    juce::Logger::writeToLog ("Script dir: " + scriptFile.getParentDirectory().getFullPathName());
+    
+    if (!scriptFile.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: Sound search script not found");
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    // Get sound_search_api_client.py (sibling to standalone_api_client.py)
+    auto soundSearchScript = scriptFile.getParentDirectory().getChildFile ("sound_search_api_client.py");
+    
+    if (!soundSearchScript.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: sound_search_api_client.py not found at: " + soundSearchScript.getFullPathName());
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    // Generate session ID for this search
+    auto sessionId = juce::Uuid().toDashedString().substring(0, 8);
+    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    auto outputFile = tempDir.getChildFile ("sound_search_" + sessionId + ".json");
+    
+    // Store output file path for polling
+    expectedSoundSearchOutputPath = outputFile.getFullPathName();
+    
+    // Build command: python sound_search_api_client.py --action search --limit 3 --session-id <id> [--video path] [--text prompt]
+    juce::StringArray args;
+    args.add (pythonExe);
+    args.add ("-X");
+    args.add ("utf8");
+    args.add (soundSearchScript.getFullPathName());
+    args.add ("--action");
+    args.add ("search");
+    args.add ("--limit");
+    args.add ("3");  // Reduced from 5 to 3 for improved speed
+    args.add ("--quiet");  // Suppress progress messages
+    args.add ("--session-id");
+    args.add (sessionId);
+    
+    // Add video if available (V2A mode)
+    if (videoPath.isNotEmpty() && juce::File(videoPath).existsAsFile())
+    {
+        args.add ("--video");
+        args.add (videoPath);
+    }
+    
+    // Add text prompt if available
+    if (prompt.isNotEmpty())
+    {
+        args.add ("--text");
+        args.add (prompt);
+    }
+    
+    // If neither video nor prompt available, skip search
+    if (videoPath.isEmpty() && prompt.isEmpty())
+    {
+        juce::Logger::writeToLog ("INFO: No video or prompt available for sound search - skipping");
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    juce::Logger::writeToLog ("Sound search command: " + args.joinIntoString (" "));
+    juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
+    
+    // Launch subprocess (keep alive until file appears, but no stdout reading)
+    soundSearchProcess = std::make_unique<juce::ChildProcess>();
+    
+    if (!soundSearchProcess->start (args))
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to start sound search process");
+        soundRecommendations.clearResults();
+        soundSearchProcess.reset();
+        return;
+    }
+    
+    juce::Logger::writeToLog ("Sound search process started (polling output file, non-blocking)");
+    
+    // Set async state and use main timer for file polling (same as audio generation)
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    currentAsyncState = AsyncState::SearchingSounds;
+    startTimer (TIMER_INTERVAL_MS);
+}
+
+void PtV2AEditor::handleSoundSearchResult (const juce::String& output)
+{
+    juce::Logger::writeToLog ("=== Sound Search Result ===");
+    juce::Logger::writeToLog ("Output length: " + juce::String (output.length()) + " chars");
+    
+    if (output.isEmpty())
+    {
+        juce::Logger::writeToLog ("ERROR: Sound search returned empty output");
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    juce::Logger::writeToLog (output);
+    
+    // Parse JSON response
+    // Expected format:
+    // {
+    //   "status": "success",
+    //   "count": 5,
+    //   "results": [
+    //     {
+    //       "id": 5362,
+    //       "description": "footsteps on concrete",
+    //       "category": "Footsteps",
+    //       "similarity": 0.85,
+    //       "local_path": "/tmp/sound_5362.wav",
+    //       "filename": "sound_5362.wav"
+    //     },
+    //     ...
+    //   ]
+    // }
+    
+    // CRITICAL: Extract JSON from output (may contain debug messages before/after)
+    // The Python script writes debug logs to stderr/stdout, but JUCE reads everything together
+    // We need to find the JSON object by looking for the outermost { ... }
+    auto jsonStart = output.indexOfChar ('{');
+    auto jsonEnd = output.lastIndexOfChar ('}');
+    
+    if (jsonStart < 0 || jsonEnd < 0 || jsonEnd <= jsonStart)
+    {
+        juce::Logger::writeToLog ("ERROR: Could not find JSON in output (no {...} found)");
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    auto jsonString = output.substring (jsonStart, jsonEnd + 1);
+    juce::Logger::writeToLog ("Extracted JSON (" + juce::String (jsonString.length()) + " chars)");
+    
+    auto json = juce::JSON::parse (jsonString);
+    auto* jsonObj = json.getDynamicObject();
+    
+    if (jsonObj == nullptr)
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to parse sound search JSON");
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    auto status = jsonObj->getProperty ("status").toString();
+    
+    if (status != "success")
+    {
+        juce::Logger::writeToLog ("ERROR: Sound search failed - " + status);
+        auto message = jsonObj->getProperty ("message").toString();
+        juce::Logger::writeToLog ("Message: " + message);
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    // Extract results array
+    auto* resultsArray = jsonObj->getProperty ("results").getArray();
+    
+    if (resultsArray == nullptr || resultsArray->isEmpty())
+    {
+        juce::Logger::writeToLog ("INFO: No sound search results found");
+        soundRecommendations.clearResults();
+        return;
+    }
+    
+    // Convert JSON results to SoundResult structs
+    std::vector<SoundResult> sounds;
+    
+    for (int i = 0; i < resultsArray->size(); ++i)
+    {
+        auto* resultObj = (*resultsArray)[i].getDynamicObject();
+        if (resultObj == nullptr)
+            continue;
+        
+        SoundResult sound;
+        sound.id = resultObj->getProperty ("id");
+        sound.description = resultObj->getProperty ("description").toString();
+        sound.category = resultObj->getProperty ("category").toString();
+        sound.similarity = resultObj->getProperty ("similarity");
+        sound.localPath = resultObj->getProperty ("local_path").toString();
+        sound.filename = resultObj->getProperty ("filename").toString();
+        
+        sounds.push_back (sound);
+        
+        juce::Logger::writeToLog ("Sound " + juce::String (i + 1) + ": " + sound.description + 
+                                  " (similarity: " + juce::String (sound.similarity, 3) + ")");
+    }
+    
+    juce::Logger::writeToLog ("✓ Loaded " + juce::String (sounds.size()) + " sound recommendations");
+    
+    // Update UI with results
+    soundRecommendations.setResults (sounds);
+    
+    // Show toggle button when results are available
+    if (!sounds.empty())
+    {
+        toggleSoundResultsButton.setVisible (true);
+        toggleSoundResultsButton.setButtonText ("Show Database Sounds (" + juce::String (sounds.size()) + ")");
+        juce::Logger::writeToLog ("Toggle button made visible with " + juce::String (sounds.size()) + " results");
+        
+        // Auto-show results on first load
+        soundRecommendations.setVisible (true);
+        juce::Logger::writeToLog ("Sound recommendations panel auto-shown");
+    }
+}
+
+//==============================================================================
+// Toggle Sound Results Handler
+//==============================================================================
+
+void PtV2AEditor::handleToggleSoundResults()
+{
+    bool isCurrentlyVisible = soundRecommendations.isVisible();
+    soundRecommendations.setVisible (!isCurrentlyVisible);
+    
+    // Update button text based on new state
+    if (!isCurrentlyVisible)
+    {
+        // Now showing
+        auto resultsCount = soundRecommendations.hasResults() ? 
+            juce::String (" (") + juce::String (soundRecommendations.getResultCount()) + ")" : "";
+        toggleSoundResultsButton.setButtonText ("Hide Database Sounds" + resultsCount);
+    }
+    else
+    {
+        // Now hiding
+        auto resultsCount = soundRecommendations.hasResults() ? 
+            juce::String (" (") + juce::String (soundRecommendations.getResultCount()) + ")" : "";
+        toggleSoundResultsButton.setButtonText ("Show Database Sounds" + resultsCount);
+    }
+    
+    juce::Logger::writeToLog ("Sound results toggled: " + juce::String (soundRecommendations.isVisible() ? "visible" : "hidden"));
+}
+
+//==============================================================================
+// Recommend Sounds Button Handler
+//==============================================================================
+
+void PtV2AEditor::handleRecommendSoundsButtonClicked()
+{
+    juce::Logger::writeToLog ("=== Recommend Sounds Button Clicked ===");
+    
+    // Get prompt text
+    juce::String promptText = prompt.getText();
+    
+    // Validate: at least ONE input required (video OR text)
+    // For T2A mode: text-only is OK
+    // For V2A mode: will check video availability via PTSL
+    if (isT2AMode && promptText.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "No Input Available",
+            "Please provide a text prompt for sound search.",
+            "OK"
+        );
+        return;
+    }
+    
+    // Store prompt for use after PTSL completes
+    currentPrompt = promptText;
+    
+    // Disable button during search
+    recommendSoundsButton.setEnabled (false);
+    recommendSoundsButton.setButtonText ("Searching...");
+    
+    // For V2A mode: start async PTSL workflow (same as render button)
+    // For T2A mode: trigger search immediately with text-only
+    if (!isT2AMode)
+    {
+        juce::Logger::writeToLog ("V2A mode: Starting async PTSL workflow...");
+        
+        // Start PTSL process to get video path
+        startTimelineSelectionRead();
+        
+        // Override state to indicate this is for sound search, not audio generation
+        currentAsyncState = AsyncState::ReadingTimelineForSoundSearch;
+    }
+    else
+    {
+        juce::Logger::writeToLog ("T2A mode: Text-only search");
+        triggerSoundSearch ("", promptText);
+        
+        // Re-enable button after a delay
+        juce::Timer::callAfterDelay (2000, [this]
+        {
+            recommendSoundsButton.setEnabled (true);
+            recommendSoundsButton.setButtonText ("Recommend Sounds");
+        });
+    }
 }
