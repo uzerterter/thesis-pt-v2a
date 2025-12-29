@@ -585,7 +585,7 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     else if (autoDetectClipBounds)
     {
         commandArray.add ("--auto-detect-clip-bounds");
-        juce::Logger::writeToLog ("⚠️ WARNING: Auto-detect clip boundaries in background (may cause deadlock from plugin!)");
+        juce::Logger::writeToLog ("WARNING: Auto-detect clip boundaries in background (may cause deadlock from plugin!)");
     }
     
     // Generate output directory path (filename will be generated server-side with prompt snippet)

@@ -54,6 +54,12 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     settingsButton.onClick = [this] { showCredentialDialog(); };
     contentComponent.addAndMakeVisible (settingsButton);
     
+    // Configure API warning label
+    apiWarningLabel.setJustificationType (juce::Justification::centredLeft);
+    apiWarningLabel.setColour (juce::Label::textColourId, juce::Colours::orange);
+    apiWarningLabel.setFont (juce::Font (14.0f, juce::Font::bold));
+    contentComponent.addAndMakeVisible (apiWarningLabel);
+    
     // Configure sound recommendations component
     soundRecommendations.onPreview = [this] (const SoundResult& sound)
     {
@@ -168,6 +174,9 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     // Initial UI state based on default workflow mode
     handleWorkflowModeChange();
     
+    // Update API credential status warning
+    updateAPICredentialStatus();
+    
     // Sound recommendations initially hidden
     soundRecommendations.setVisible (false);
     
@@ -186,6 +195,19 @@ void PtV2AEditor::handleRenderButtonClicked()
     juce::Logger::writeToLog ("=== Render Button Clicked ===");
     juce::Logger::writeToLog ("Prompt: " + prompt.getText());
     juce::Logger::writeToLog ("Mode: " + juce::String (isT2AMode ? "T2A" : "V2A"));
+    
+    // Check if credentials are saved
+    if (processor.getCloudflareClientSecret().isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Error: API Credentials Not Correct",
+            "Please save the correct API credentials under API Settings before rendering audio.\n\n"
+            "Click 'API Settings' at the bottom right to configure your credentials.",
+            "OK"
+        );
+        return;
+    }
     
     // T2A mode validation and workflow
     if (isT2AMode)
@@ -482,11 +504,20 @@ void PtV2AEditor::resized()
     auto soundRecommendationsArea = r.removeFromTop (140);  // Fixed height for component
     soundRecommendations.setBounds (soundRecommendationsArea);
 
-    // Settings button at bottom-right
+    // Settings row at bottom: [Warning Label] [API Settings Button]
     auto settingsRow = r.removeFromBottom (28);
     r.removeFromBottom (10);  // Spacing
-    settingsRow.removeFromLeft (contentComponent.getWidth() - 200 - 24);  // Align right (accounting for margins)
-    settingsButton.setBounds (settingsRow.removeFromLeft (180));
+    
+    // Calculate positions for warning label and settings button
+    const int warningWidth = 160;
+    const int settingsWidth = 180;
+    const int settingsGap = 10;
+    const int totalSettingsWidth = warningWidth + settingsGap + settingsWidth;
+    
+    settingsRow.removeFromLeft (contentComponent.getWidth() - totalSettingsWidth - 24);  // Align right (accounting for margins)
+    apiWarningLabel.setBounds (settingsRow.removeFromLeft (warningWidth));
+    settingsRow.removeFromLeft (settingsGap);
+    settingsButton.setBounds (settingsRow.removeFromLeft (settingsWidth));
 
 }
 
@@ -2199,6 +2230,49 @@ void PtV2AEditor::handleGenerationModeChange()
 }
 
 //==============================================================================
+// API Credential Status Update
+//==============================================================================
+void PtV2AEditor::updateAPICredentialStatus()
+{
+    // Check if credentials are saved
+    bool hasCredentials = !processor.getCloudflareClientSecret().isEmpty();
+    
+    if (!hasCredentials)
+    {
+        // No credentials saved at all
+        apiWarningLabel.setText (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 API credentials empty"), juce::dontSendNotification);  // ⚠
+        apiWarningLabel.setVisible (true);
+        juce::Logger::writeToLog ("=== API Credential Status: Missing ===");
+    }
+    else
+    {
+        // Credentials exist - test if they're valid (non-blocking check)
+        // This makes a real HTTP request, so we do it asynchronously
+        juce::String error;
+        bool valid = processor.testCloudflareCredentials (
+            processor.getCloudflareClientId(),
+            processor.getCloudflareClientSecret(),
+            &error
+        );
+        
+        if (valid)
+        {
+            // Valid credentials - hide warning
+            apiWarningLabel.setVisible (false);
+            juce::Logger::writeToLog ("=== API Credential Status: Valid ===");
+        }
+        else
+        {
+            // Invalid credentials - show warning
+            apiWarningLabel.setText (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 API credentials invalid"), juce::dontSendNotification);  // ⚠
+            apiWarningLabel.setVisible (true);
+            juce::Logger::writeToLog ("=== API Credential Status: Invalid ===");
+            juce::Logger::writeToLog ("Error: " + error);
+        }
+    }
+}
+
+//==============================================================================
 // Workflow Mode Change Handler
 //==============================================================================
 void PtV2AEditor::handleWorkflowModeChange()
@@ -2291,8 +2365,8 @@ void PtV2AEditor::showCredentialDialog()
     auto* credentialWindow = new juce::AlertWindow (
         "API Access Credentials",
         "Enter your Access Token Secret.\n\n"
-        "Do not change the Client ID unless advised.\n"
-        "You can test the API connection before saving.",
+        "Do not change the Client ID unless advised to.\n"
+        "You can test the API connection before saving.\n",
         juce::MessageBoxIconType::NoIcon
     );
     
@@ -2350,7 +2424,7 @@ void PtV2AEditor::showCredentialDialog()
                     juce::AlertWindow::showMessageBoxAsync (
                         juce::MessageBoxIconType::WarningIcon,
                         "Connection Failed",
-                        "Could not connect to API:\n\n" + error,
+                        "\Could not connect to API.\n\n" + error,
                         "OK"
                     );
                     
@@ -2365,6 +2439,9 @@ void PtV2AEditor::showCredentialDialog()
                 
                 if (processor.saveCloudflareCredentials (newId, newSecret))
                 {
+                    // Update credential status after successful save
+                    updateAPICredentialStatus();
+                    
                     juce::AlertWindow::showMessageBoxAsync (
                         juce::MessageBoxIconType::InfoIcon,
                         "Credentials Saved",
@@ -2854,6 +2931,19 @@ void PtV2AEditor::handleToggleSoundResults()
 void PtV2AEditor::handleRecommendSoundsButtonClicked()
 {
     juce::Logger::writeToLog ("=== Recommend Sounds Button Clicked ===");
+    
+    // Check if credentials are saved
+    if (processor.getCloudflareClientSecret().isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Error: API Credentials Not Correct",
+            "Please save the correct API credentials under API Settings before searching sounds.\n\n"
+            "Click 'API Settings' at the bottom right to configure your credentials.",
+            "OK"
+        );
+        return;
+    }
     
     // Get prompt text
     juce::String promptText = prompt.getText();

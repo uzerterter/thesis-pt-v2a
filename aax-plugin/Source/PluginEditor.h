@@ -137,6 +137,12 @@ private:
     juce::TextButton settingsButton { "API Settings" };
     
     /**
+     * Warning label for invalid/missing API credentials
+     * Shows "⚠ API not connected" when credentials are not saved or invalid
+     */
+    juce::Label apiWarningLabel;
+    
+    /**
      * Sound recommendations component for displaying BBC Sound Search results
      * Shows search results with navigation, preview, and import functionality
      * Placed below the action button
@@ -313,6 +319,12 @@ private:
      * Updates UI: enables/disables relevant fields, changes action button text
      */
     void handleWorkflowModeChange();
+    
+    /**
+     * Update API credential status warning
+     * Shows/hides warning label based on credential validity
+     */
+    void updateAPICredentialStatus();
     
     /**
      * Handle T2A render button click - text-to-audio workflow without video
