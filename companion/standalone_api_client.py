@@ -794,7 +794,7 @@ def main():
                     
                 except ValueError:
                     # Response is HTML, authentication failed
-                    error_msg = 'Received HTML instead of JSON. Credentials may be invalid or Access Policy misconfigured.'
+                    error_msg = 'Credentials may be invalid or Access Policy misconfigured.'
                     log_debug(f"ERROR: {error_msg}")
                     result = {
                         'success': False,

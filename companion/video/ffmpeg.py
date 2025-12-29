@@ -337,7 +337,10 @@ def trim_and_maybe_downscale_video(
         
         ffmpeg_path = ffmpeg_check['path']
         
-        # 1. Estimate trimmed size based on duration percentage
+        # 1. Get original FPS (to preserve it)
+        fps = get_video_fps(video_path, ffmpeg_path)
+        
+        # 2. Estimate trimmed size based on duration percentage
         original_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
         duration_result = get_video_duration(video_path)
         
@@ -351,10 +354,10 @@ def trim_and_maybe_downscale_video(
             # Conservative: assume trimmed will be same size
             estimated_size_mb = original_size_mb
         
-        # 2. Decide: Downscale or not?
+        # 3. Decide: Downscale or not?
         should_downscale = estimated_size_mb >= size_threshold_mb
         
-        # 3. Generate output path
+        # 4. Generate output path
         if output_path is None:
             temp_dir = Path(tempfile.gettempdir()) / "pt_v2a"
             temp_dir.mkdir(exist_ok=True)
@@ -362,7 +365,7 @@ def trim_and_maybe_downscale_video(
             suffix = "_480p" if should_downscale else ""
             output_path = str(temp_dir / f"trimmed_{timestamp}_{start_seconds}_{end_seconds}{suffix}.mp4")
         
-        # 4. Build FFmpeg command (combined trim + optional downscale)
+        # 5. Build FFmpeg command (combined trim + optional downscale)
         start_time = time.time()
         
         if should_downscale:
@@ -370,6 +373,7 @@ def trim_and_maybe_downscale_video(
             cmd = [
                 str(ffmpeg_path),
                 '-y',
+                '-an',
                 '-ss', str(start_seconds),
                 '-to', str(end_seconds),
                 '-i', str(video_path),
@@ -377,7 +381,10 @@ def trim_and_maybe_downscale_video(
                 '-c:v', 'libx264',
                 '-preset', preset,
                 '-crf', str(crf),
+                '-r', str(fps),       # EXPLICIT FPS (preserve original!)
                 '-c:a', 'aac',
+                '-maxrate', '3M',     # Cap bitrate at 3 Mbps (prevents excessively large files)
+                '-bufsize', '6M',     # VBV buffer = 2x maxrate (allows headroom for complex scenes)
                 output_path
             ]
         else:
@@ -385,17 +392,21 @@ def trim_and_maybe_downscale_video(
             cmd = [
                 str(ffmpeg_path),
                 '-y',
+                '-an',
                 '-ss', str(start_seconds),
                 '-to', str(end_seconds),
                 '-i', str(video_path),
                 '-c:v', 'libx264',
                 '-preset', preset,
                 '-crf', str(crf),
+                '-r', str(fps),       # EXPLICIT FPS (preserve original!)
                 '-c:a', 'aac',
+                '-maxrate', '3M',     # Cap bitrate at 3 Mbps (prevents excessively large files)
+                '-bufsize', '6M',     # VBV buffer = 2x maxrate (allows headroom for complex scenes)
                 output_path
             ]
         
-        # 5. Execute
+        # 6. Execute
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         encoding_time = time.time() - start_time
         
@@ -599,6 +610,60 @@ def get_video_duration(video_path: str) -> Dict[str, any]:
         }
 
 
+def get_video_fps(video_path: str, ffmpeg_path: Optional[str] = None) -> float:
+    """
+    Get video FPS (frames per second) using FFmpeg.
+    
+    Parses FFmpeg's stderr output to extract framerate information.
+    Handles both decimal (30.0 fps) and fractional (30000/1001 fps) formats.
+    
+    Args:
+        video_path: Path to video file
+        ffmpeg_path: Path to FFmpeg executable (auto-detected if None)
+    
+    Returns:
+        float: FPS value (defaults to 30.0 if detection fails)
+    
+    Example:
+        >>> fps = get_video_fps("video.mp4")
+        >>> print(f"Video FPS: {fps}")
+    """
+    try:
+        # Get FFmpeg path if not provided
+        if ffmpeg_path is None:
+            ffmpeg_check = check_ffmpeg_available()
+            if not ffmpeg_check['available']:
+                return 30.0  # Fallback
+            ffmpeg_path = ffmpeg_check['path']
+        
+        # Run FFmpeg to get stream info
+        fps_cmd = [
+            str(ffmpeg_path),
+            '-i', str(video_path),
+            '-f', 'null',
+            '-'
+        ]
+        result = subprocess.run(fps_cmd, capture_output=True, text=True, timeout=5)
+        
+        # Parse FPS from stderr (format: "Stream #0:0: Video: ..., 30 fps" or "29.97 fps")
+        import re
+        fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', result.stderr)
+        if fps_match:
+            return float(fps_match.group(1))
+        
+        # Try alternative format: "30000/1001 fps"
+        fps_match = re.search(r'(\d+)/(\d+)\s*fps', result.stderr)
+        if fps_match:
+            num, den = int(fps_match.group(1)), int(fps_match.group(2))
+            return num / den
+        
+        # Default fallback
+        return 30.0
+        
+    except Exception:
+        return 30.0  # Fallback if FPS detection fails
+
+
 def get_video_bitrate(video_path: str) -> Dict[str, any]:
     """
     Get video bitrate using FFprobe.
@@ -781,37 +846,8 @@ def downscale_video(
                 'error': 'FFmpeg not found (imageio_ffmpeg not installed and not in PATH)'
             }
         
-        # Get original FPS using FFmpeg (no FFprobe needed!)
-        # FFmpeg prints stream info in stderr when analyzing input
-        try:
-            fps_cmd = [
-                str(ffmpeg_path),
-                '-i', str(video_path),
-                '-f', 'null',
-                '-'
-            ]
-            result = subprocess.run(fps_cmd, capture_output=True, text=True, timeout=5)
-            
-            # Parse FPS from stderr (format: "Stream #0:0: Video: ..., 30 fps" or "29.97 fps")
-            import re
-            fps_match = re.search(r'(\d+(?:\.\d+)?)\s*fps', result.stderr)
-            if fps_match:
-                fps = float(fps_match.group(1))
-            else:
-                # Try alternative format: "30000/1001 fps"
-                fps_match = re.search(r'(\d+)/(\d+)\s*fps', result.stderr)
-                if fps_match:
-                    num, den = int(fps_match.group(1)), int(fps_match.group(2))
-                    fps = num / den
-                else:
-                    # Default fallback: 30 fps
-                    fps = 30.0
-                    
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Failed to get FPS: {e}'
-            }
+        # Get original FPS (to preserve it)
+        fps = get_video_fps(video_path, ffmpeg_path)
         
         # Generate output path if not provided
         if output_path is None:
@@ -823,7 +859,7 @@ def downscale_video(
         # Original file size
         original_size = Path(video_path).stat().st_size / (1024 * 1024)  # MB
         
-        # FFmpeg command: downscale with CRF quality-based encoding
+        # FFmpeg command: downscale with CRF quality-based encoding + bitrate cap
         command = [
             str(ffmpeg_path),
             '-i', str(video_path),
@@ -831,8 +867,10 @@ def downscale_video(
             '-c:v', 'libx264',
             '-crf', str(crf),
             '-preset', preset,
-            '-r', str(fps),  # EXPLICIT FPS (preserve original!)
-            '-an',           # Remove audio (not needed for video-to-audio models)
+            '-maxrate', '3M',     # Cap bitrate at 3 Mbps (prevents excessively large files)
+            '-bufsize', '6M',     # VBV buffer = 2x maxrate (allows headroom for complex scenes)
+            '-r', str(fps),       # EXPLICIT FPS (preserve original!)
+            '-an',                # Remove audio (not needed for video-to-audio models)
             '-y',
             str(output_path)
         ]
