@@ -87,7 +87,13 @@ from cli.actions import (
 )
 
 # Legacy configuration (for backwards compatibility)
-DEFAULT_VIDEO_PATH = r"C:\Users\Ludenbold\Desktop\Master_Thesis\Implementation\model-tests\data\MMAudio_examples\noSound\sora_galloping.mp4"
+# Use relative path for cross-platform compatibility
+try:
+    # Try to find test video relative to companion/ directory
+    DEFAULT_VIDEO_PATH = str(Path(__file__).parents[2] / "model-tests" / "data" / "MMAudio_examples" / "noSound" / "sora_galloping.mp4")
+except Exception:
+    # Fallback: Use a placeholder path
+    DEFAULT_VIDEO_PATH = "test_video.mp4"
 
 # =============================================================================
 # CLI Functions (parse arguments, interactive mode, main entry point)

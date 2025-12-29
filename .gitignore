@@ -31,6 +31,8 @@ juce_build/
 
 # Embedded Python (too large for Git, set up locally)
 aax-plugin/Resources/python/
+aax-plugin/Resources/python-windows/
+aax-plugin/Resources/python-macos/
 # Exception: Keep setup documentation
 !aax-plugin/Resources/python/README.md
 

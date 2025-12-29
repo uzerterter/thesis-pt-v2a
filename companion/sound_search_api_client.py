@@ -326,8 +326,8 @@ def main():
     parser.add_argument(
         '--text-weight',
         type=float,
-        default=0.6,
-        help='Weight for text vs video (0-1, default: 0.6)'
+        default=0.65,
+        help='Weight for text vs video (0-1, default: 0.65)'
     )
     
     parser.add_argument(

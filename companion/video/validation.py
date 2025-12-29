@@ -16,18 +16,18 @@ SUPPORTED_VIDEO_FORMATS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wm
 def validate_video_duration(
     duration_seconds: float,
     max_duration: float = 12.0,
-    min_duration: float = 5.0
+    min_duration: float = 4.0
 ) -> Dict[str, any]:
     """
     Validate video duration against minimum and maximum allowed duration.
     
-    MMAudio was trained on 8-second clips, so we enforce a 5-12 second
+    MMAudio was trained on 8-second clips, so we enforce a 4-12 second
     range to ensure good results.
     
     Args:
         duration_seconds (float): Video duration in seconds
         max_duration (float): Maximum allowed duration (default: 12.0s)
-        min_duration (float): Minimum allowed duration (default: 5.0s)
+        min_duration (float): Minimum allowed duration (default: 4.0s)
     
     Returns:
         dict: {
@@ -47,7 +47,7 @@ def validate_video_duration(
     
     Note:
         Based on MMAudio training data (8s clips), we enforce strict
-        5-12s range. NO fallback to full video - this is intentional
+        4-12s range. NO fallback to full video - this is intentional
         to ensure quality results.
     """
     if duration_seconds <= 0:

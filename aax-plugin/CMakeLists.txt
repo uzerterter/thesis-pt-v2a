@@ -15,6 +15,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ==============================================================================
+# Platform Configuration
+# ==============================================================================
+# Mac Universal Binary - supports both Apple Silicon (arm64) and Intel (x86_64)
+if(APPLE)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version" FORCE)
+    message(STATUS "Building Universal Binary for macOS (arm64 + x86_64)")
+endif()
+
+# ==============================================================================
 # External Dependencies
 # ==============================================================================
 
@@ -65,6 +75,9 @@ juce_add_plugin(pt_v2a
     
     # Resources Embedding - CRITICAL for embedded Python + FFmpeg
     COPY_PLUGIN_AFTER_BUILD TRUE      # Enables automatic plugin installation after build
+    
+    # Mac-specific: Universal Binary support
+    OSX_ARCHITECTURES "arm64;x86_64"  # Build for both Apple Silicon and Intel
 )
 
 # ==============================================================================

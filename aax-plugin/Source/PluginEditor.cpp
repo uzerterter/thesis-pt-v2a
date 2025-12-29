@@ -1067,12 +1067,12 @@ void PtV2AEditor::timerCallback()
             stopTimer();
             currentAsyncState = AsyncState::Idle;
             
-            // Re-enable button
+            // Handle results (this will show error/success messages)
+            handleSoundSearchResult (jsonText);
+            
+            // Re-enable button AFTER results are parsed
             actionButton.setEnabled (true);
             actionButton.setButtonText ("Recommend Sounds");
-            
-            // Handle results
-            handleSoundSearchResult (jsonText);
             
             // Cleanup output file
             outputFile.deleteFile();
@@ -1294,7 +1294,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 errorMessage + "\n\n"
                 "Please:\n"
                 "1. Select a video clip in Pro Tools (use Selector Tool)\n"
-                "2. Make sure the clip is 5-12 seconds long\n"
+                "2. Make sure the clip is 4-12 seconds long\n"
                 "3. Pro Tools must be running with PTSL enabled",
                 "OK"
             );
@@ -1336,15 +1336,15 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         //======================================================================
         juce::Logger::writeToLog ("=== V2A Mode: Processing video clip ===");
         
-        // Validate duration: 5-12 seconds
-        if (durationSeconds < 5.0f)
+        // Validate duration: 4-12 seconds
+        if (durationSeconds < 4.0f)
         {
             juce::AlertWindow::showMessageBoxAsync (
                 juce::MessageBoxIconType::WarningIcon,
                 "Selection Too Short",
                 juce::String::formatted (
                     "Timeline selection is only %.2f seconds.\n\n"
-                    "MMAudio requires clip selections between 5-12 seconds.\n\n"
+                    "MMAudio requires clip selections between 4-12 seconds.\n\n"
                     "Please:\n"
                     "1. Select a longer video clip\n"
                     "2. Or extend your current selection (In/Out points)",
@@ -1365,7 +1365,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 "Selection Too Long",
                 juce::String::formatted (
                     "Timeline selection is %.2f seconds.\n\n"
-                    "MMAudio requires clip selections between 5-12 seconds.\n\n"
+                    "MMAudio requires clip selections between 4-12 seconds.\n\n"
                     "Please:\n"
                     "1. Select a shorter video clip\n"
                     "2. Or reduce your current selection (In/Out points)",
@@ -2759,6 +2759,10 @@ void PtV2AEditor::triggerSoundSearch (const juce::String& videoPath, const juce:
     
     juce::Logger::writeToLog ("Sound search process started (polling output file, non-blocking)");
     
+    // Disable button during search
+    actionButton.setEnabled (false);
+    actionButton.setButtonText ("Searching...");
+    
     // Set async state and use main timer for file polling (same as audio generation)
     asyncOperationStartTime = juce::Time::getCurrentTime();
     currentAsyncState = AsyncState::SearchingSounds;
@@ -2985,13 +2989,6 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
     {
         juce::Logger::writeToLog ("T2A mode: Text-only search");
         triggerSoundSearch ("", promptText);
-        
-        // Re-enable button after a delay
-        juce::Timer::callAfterDelay (2000, [this]
-        {
-            actionButton.setEnabled (true);
-            actionButton.setButtonText ("Recommend Sounds");
-        });
     }
 }
 

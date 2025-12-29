@@ -156,6 +156,29 @@ juce::String PtV2AProcessor::getPythonExecutable()
         return embeddedPythonExe.getFullPathName();
     }
     
+#if JUCE_MAC
+    // Try alternative Mac Python locations (bin/python3, bin/python)
+    auto altPython1 = contentsDir.getChildFile("Resources")
+                                  .getChildFile("python")
+                                  .getChildFile("bin")
+                                  .getChildFile("python3");
+    if (altPython1.existsAsFile())
+    {
+        juce::Logger::writeToLog ("✓ Using embedded Python from Resources/python/bin/python3");
+        return altPython1.getFullPathName();
+    }
+    
+    auto altPython2 = contentsDir.getChildFile("Resources")
+                                  .getChildFile("python")
+                                  .getChildFile("bin")
+                                  .getChildFile("python");
+    if (altPython2.existsAsFile())
+    {
+        juce::Logger::writeToLog ("✓ Using embedded Python from Resources/python/bin/python");
+        return altPython2.getFullPathName();
+    }
+#endif
+    
     juce::Logger::writeToLog ("⚠ Embedded Python not found!");
     juce::Logger::writeToLog ("Expected at: " + embeddedPythonExe.getFullPathName());
     juce::Logger::writeToLog ("Make sure Resources/python/ is copied to the plugin bundle");
@@ -279,24 +302,23 @@ juce::File PtV2AProcessor::getAPIClientScript()
     
     juce::Logger::writeToLog ("Script not found at CWD: " + cwdScript.getFullPathName());
     
-#if JUCE_WINDOWS
-    // Windows-specific fallback: Try known absolute paths
-    juce::StringArray fallbackPaths = {
-        "C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\thesis-pt-v2a\\companion\\standalone_api_client.py",
-        "C:\\Users\\Ludenbold\\Desktop\\Master_Thesis\\Implementation\\thesis-pt-v2a\\companion\\standalone_api_client.py"
-    };
+    // Development fallback: Try parent directories (works cross-platform)
+    // This helps when running from build directories during development
+    auto devCompanionDir = pluginDir.getParentDirectory()  // up from x64/ or MacOS/
+                                    .getParentDirectory()  // up from Contents/
+                                    .getParentDirectory()  // up from .aaxplugin/
+                                    .getParentDirectory()  // up from AAX/
+                                    .getParentDirectory()  // up from pt_v2a_artefacts/
+                                    .getParentDirectory()  // up from build/
+                                    .getChildFile("companion")
+                                    .getChildFile("standalone_api_client.py");
     
-    for (const auto& path : fallbackPaths)
+    juce::Logger::writeToLog ("Checking development path: " + devCompanionDir.getFullPathName());
+    if (devCompanionDir.existsAsFile())
     {
-        juce::File fallbackFile (path);
-        if (fallbackFile.existsAsFile())
-        {
-            juce::Logger::writeToLog ("✓ Found API client script via fallback: " + fallbackFile.getFullPathName());
-            return fallbackFile;
-        }
-        juce::Logger::writeToLog ("Script not found at fallback: " + path);
+        juce::Logger::writeToLog ("✓ Found API client script in development tree");
+        return devCompanionDir;
     }
-#endif
     
     juce::Logger::writeToLog ("❌ ERROR: API client script not found in any location!");
     juce::Logger::writeToLog ("Current working directory: " + juce::File::getCurrentWorkingDirectory().getFullPathName());
