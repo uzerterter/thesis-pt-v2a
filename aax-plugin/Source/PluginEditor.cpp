@@ -7,31 +7,52 @@
 PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
 : AudioProcessorEditor (&p), processor (p)
 {
+    // Setup viewport for scrolling
+    addAndMakeVisible (viewport);
+    viewport.setViewedComponent (&contentComponent, false);  // false = we manage the content component's lifetime
+    viewport.setScrollBarsShown (true, false);  // Vertical scrollbar, no horizontal scrollbar
+    
     // Configure text input for prompt
     prompt.setMultiLine (true);  // Allow line breaks
     prompt.setReturnKeyStartsNewLine (true);  // Enter = new line
     prompt.setScrollbarsShown (true);  // Show scrollbar if needed
     promptLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (promptLabel);
-    addAndMakeVisible (prompt);
+    contentComponent.addAndMakeVisible (promptLabel);
+    contentComponent.addAndMakeVisible (prompt);
+    
+    // Configure workflow mode selection
+    modeLabel.setJustificationType (juce::Justification::centredLeft);
+    contentComponent.addAndMakeVisible (modeLabel);
+    
+    audioGenModeButton.setRadioGroupId (1000);  // Separate group from V2A/T2A
+    audioGenModeButton.setToggleState (true, juce::dontSendNotification);  // Default: Audio Generation
+    audioGenModeButton.onClick = [this] { handleWorkflowModeChange(); };
+    contentComponent.addAndMakeVisible (audioGenModeButton);
+    
+    soundRecModeButton.setRadioGroupId (1000);  // Same group as Audio Generation
+    soundRecModeButton.onClick = [this] { handleWorkflowModeChange(); };
+    contentComponent.addAndMakeVisible (soundRecModeButton);
 
-    // Configure render button with click handler
-    renderButton.onClick = [this]
+    // Configure unified action button (changes based on workflow mode)
+    actionButton.onClick = [this]
     {
-        handleRenderButtonClicked();
+        if (currentWorkflowMode == WorkflowMode::AudioGeneration)
+            handleRenderButtonClicked();
+        else
+            handleRecommendSoundsButtonClicked();
     };
-    addAndMakeVisible (renderButton);
+    contentComponent.addAndMakeVisible (actionButton);
     
     // Configure open log button with click handler
     openLogButton.onClick = [this]
     {
         handleOpenLogButtonClicked();
     };
-    addAndMakeVisible (openLogButton);
+    contentComponent.addAndMakeVisible (openLogButton);
 
     // Configure settings button with click handler
     settingsButton.onClick = [this] { showCredentialDialog(); };
-        addAndMakeVisible (settingsButton);
+    contentComponent.addAndMakeVisible (settingsButton);
     
     // Configure sound recommendations component
     soundRecommendations.onPreview = [this] (const SoundResult& sound)
@@ -42,7 +63,7 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     {
         handleSoundImport (sound);
     };
-    addAndMakeVisible (soundRecommendations);
+    contentComponent.addAndMakeVisible (soundRecommendations);
 
     // First-launch check: show dialog if credentials are missing
     if (processor.getCloudflareClientSecret().isEmpty())
@@ -66,7 +87,7 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     
     // Configure negative prompt label
     negativePromptLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (negativePromptLabel);
+    contentComponent.addAndMakeVisible (negativePromptLabel);
     
     // Configure negative prompt input
     negativePromptInput.setMultiLine (true);
@@ -74,32 +95,32 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     negativePromptInput.setScrollbarsShown (true);
     negativePromptInput.setTextToShowWhenEmpty ("voices, music, melody, singing, speech,interference", juce::Colours::grey);
     negativePromptInput.setText ("voices, music, melody, singing, speech, interference");  // Set default value
-    addAndMakeVisible (negativePromptInput);
+    contentComponent.addAndMakeVisible (negativePromptInput);
     
     // Configure seed label
     seedLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (seedLabel);
+    contentComponent.addAndMakeVisible (seedLabel);
     
     // Configure seed input
     seedInput.setMultiLine (false);
     seedInput.setReturnKeyStartsNewLine (false);
     seedInput.setTextToShowWhenEmpty ("42", juce::Colours::grey);
     seedInput.setText ("42");  // Set default value
-    addAndMakeVisible (seedInput);
+    contentComponent.addAndMakeVisible (seedInput);
     
     // Configure generation mode radio buttons (V2A vs T2A)
     v2aModeButton.setRadioGroupId (1001);
     v2aModeButton.setToggleState (true, juce::dontSendNotification);  // Default: V2A mode
     v2aModeButton.onClick = [this] { handleGenerationModeChange(); };
-    addAndMakeVisible (v2aModeButton);
+    contentComponent.addAndMakeVisible (v2aModeButton);
     
     t2aModeButton.setRadioGroupId (1001);
     t2aModeButton.onClick = [this] { handleGenerationModeChange(); };
-    addAndMakeVisible (t2aModeButton);
+    contentComponent.addAndMakeVisible (t2aModeButton);
     
     // Configure duration dropdown (for T2A mode)
     durationLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (durationLabel);
+    contentComponent.addAndMakeVisible (durationLabel);
     
     durationComboBox.addItem ("4s", 1);
     durationComboBox.addItem ("5s", 2);
@@ -112,7 +133,7 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     durationComboBox.addItem ("12s", 9);
     durationComboBox.setSelectedId (5, juce::dontSendNotification);  // Default: 8s
     durationComboBox.setEnabled (false);  // Initially disabled (V2A mode)
-    addAndMakeVisible (durationComboBox);
+    contentComponent.addAndMakeVisible (durationComboBox);
     
     // Configure high precision mode toggle (deprecated TODO remove in future)
     // highPrecisionModeToggle.setToggleState (false, juce::dontSendNotification);  // Default: off (bfloat16)
@@ -120,33 +141,32 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     
     // Configure model selection labels
     modelLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (modelLabel);
+    contentComponent.addAndMakeVisible (modelLabel);
     
     modelSizeLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (modelSizeLabel);
+    contentComponent.addAndMakeVisible (modelSizeLabel);
     
     // Configure model provider ComboBox
     modelProviderComboBox.addItem ("MMAudio", 1);
     modelProviderComboBox.addItem ("HunyuanVideo-Foley", 2);
     modelProviderComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: MMAudio
     modelProviderComboBox.onChange = [this] { handleModelProviderChange(); };
-    addAndMakeVisible (modelProviderComboBox);
+    contentComponent.addAndMakeVisible (modelProviderComboBox);
     
     // Configure model size ComboBox (initial values for MMAudio)
     modelSizeComboBox.addItem ("Large", 1);
     modelSizeComboBox.addItem ("Medium", 2);
     modelSizeComboBox.addItem ("Small", 3);
     modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
-    addAndMakeVisible (modelSizeComboBox);
-
-    // Configure recommend sounds button
-    recommendSoundsButton.onClick = [this] { handleRecommendSoundsButtonClicked(); };
-    addAndMakeVisible (recommendSoundsButton);
+    contentComponent.addAndMakeVisible (modelSizeComboBox);
     
     // Configure toggle button for sound recommendations
     toggleSoundResultsButton.onClick = [this] { handleToggleSoundResults(); };
     toggleSoundResultsButton.setVisible (false);  // Initially hidden until results available
-    addAndMakeVisible (toggleSoundResultsButton);
+    contentComponent.addAndMakeVisible (toggleSoundResultsButton);
+    
+    // Initial UI state based on default workflow mode
+    handleWorkflowModeChange();
     
     // Sound recommendations initially hidden
     soundRecommendations.setVisible (false);
@@ -154,8 +174,8 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     // Set fixed window size (not resizable in Pro Tools)
     // Pro Tools plugins typically have fixed UI layouts
     setResizable (true, true);
-    setResizeLimits (600, 380, 1200, 660);  // min/max width/height
-    setSize (900, 520);  // Width x Height in pixels (increased for model selection row)
+    setResizeLimits (400, 400, 1200, 1200);  // min/max width/height
+    setSize (750, 600);  // Width x Height in pixels (increased for model selection row)
 }
 
 //==============================================================================
@@ -189,8 +209,8 @@ void PtV2AEditor::handleRenderButtonClicked()
     }
     
     // Disable button during processing
-    renderButton.setEnabled (false);
-    renderButton.setButtonText ("Checking...");
+    actionButton.setEnabled (false);
+    actionButton.setButtonText ("Checking...");
     
     //==========================================================================
     // Step 1: Check API availability (uses config.json for cloudflared support)
@@ -212,16 +232,16 @@ void PtV2AEditor::handleRenderButtonClicked()
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         return;
     }
     
     //==========================================================================
     // Step 2: Start async timeline selection read (non-blocking!)
     //==========================================================================
-    renderButton.setButtonText ("Reading Selection...");
-    renderButton.setEnabled (false);
+    actionButton.setButtonText ("Reading Selection...");
+    actionButton.setEnabled (false);
     
     // Start async PTSL process - timer will handle the rest!
     // The workflow continues in handleTimelineSelectionResult() after PTSL finishes
@@ -287,8 +307,8 @@ void PtV2AEditor::handleT2ARenderButtonClicked()
     t2aDuration = duration;
     
     // Disable button during operation
-    renderButton.setEnabled (false);
-    renderButton.setButtonText ("Checking API...");
+    actionButton.setEnabled (false);
+    actionButton.setButtonText ("Checking API...");
     
     // Check MMAudio API availability (T2A only supports MMAudio)
     juce::String apiUrl = processor.getConfiguredAPIUrl ("mmaudio");
@@ -303,13 +323,13 @@ void PtV2AEditor::handleT2ARenderButtonClicked()
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         return;
     }
     
     // Start async timeline-only read (T2A doesn't need video clips)
-    renderButton.setButtonText ("Reading Selection...");
+    actionButton.setButtonText ("Reading Selection...");
     startTimelineSelectionReadOnly();
 }
 
@@ -327,10 +347,48 @@ void PtV2AEditor::paint (juce::Graphics& g)
 //==============================================================================
 void PtV2AEditor::resized()
 {
-    // Layout components with 24px margin around edges
-    auto r = getLocalBounds().reduced (24);
+    // Viewport takes full editor bounds
+    viewport.setBounds (getLocalBounds());
     
-    // Prompt text input: full width, 28px height, at top
+    // Calculate content height (sum of all components + spacing + margins)
+    int contentHeight = 24 +  // Top margin
+                        28 +  // Mode row
+                        20 +  // Spacing
+                        28 +  // Prompt row
+                        20 +  // Spacing
+                        28 +  // Negative prompt row
+                        20 +  // Spacing
+                        28 +  // Seed row
+                        20 +  // Spacing
+                        28 +  // Model row
+                        60 +  // Spacing before buttons
+                        28 +  // Button row
+                        15 +  // Spacing
+                        28 +  // Toggle button row
+                        10 +  // Spacing
+                        140 + // Sound recommendations component
+                        10 +  // Spacing
+                        28 +  // Settings button row
+                        24;   // Bottom margin
+    
+    // Set content component size (full viewport width, calculated height)
+    contentComponent.setSize (getWidth(), contentHeight);
+    
+    // Layout components within contentComponent with 24px margin around edges
+    auto r = contentComponent.getLocalBounds().reduced (24);
+    
+    // Mode selection row at the top
+    auto modeRow = r.removeFromTop (28);
+    modeLabel.setBounds (modeRow.removeFromLeft (65));
+    modeRow.removeFromLeft (10);
+    audioGenModeButton.setBounds (modeRow.removeFromLeft (280));
+    modeRow.removeFromLeft (15);
+    soundRecModeButton.setBounds (modeRow.removeFromLeft (280));
+    
+    // 20px spacing after mode selection
+    r.removeFromTop (20);
+    
+    // Prompt text input: full width, 28px height
     auto promptRow = r.removeFromTop (28);
     promptLabel.setBounds (promptRow.removeFromLeft (65));
     promptRow.removeFromLeft (10);    
@@ -383,7 +441,7 @@ void PtV2AEditor::resized()
 
 
     // 30px spacing before next row
-    r.removeFromTop (30);
+    //r.removeFromTop (30);
     
     // Video offset row: Label + Input field (deprecated TODO remove in future)
     // auto offsetRow = r.removeFromTop (28);
@@ -397,24 +455,20 @@ void PtV2AEditor::resized()
     // 60px spacing before buttons section
     r.removeFromTop (60);
 
-    // Button row: center the button group so left/right margins are equal
+    // Unified action button row: centered
     auto buttonRow = r.removeFromTop (28);
 
-    const int renderW   = 160;
-    const int recommendW = 160;
+    const int actionW   = 160;
     const int openLogW  = 120;
-    const int gap1      = 20;  // between render and recommend
-    const int gap2      = 20;  // between recommend and openLog
+    const int gap       = 20;
 
-    const int totalWidth = renderW + gap1 + recommendW + gap2 + openLogW;
+    const int totalWidth = actionW + gap + openLogW;
     int startX = buttonRow.getX() + juce::jmax (0, (buttonRow.getWidth() - totalWidth) / 2);
     int y = buttonRow.getY();
     int h = buttonRow.getHeight();
 
-    renderButton.setBounds (startX, y, renderW, h);
-    startX += renderW + gap1;
-    recommendSoundsButton.setBounds (startX, y, recommendW, h);
-    startX += recommendW + gap2;
+    actionButton.setBounds (startX, y, actionW, h);
+    startX += actionW + gap;
     openLogButton.setBounds (startX, y, openLogW, h);
 
     // Toggle button for sound recommendations - placed below render button
@@ -431,7 +485,7 @@ void PtV2AEditor::resized()
     // Settings button at bottom-right
     auto settingsRow = r.removeFromBottom (28);
     r.removeFromBottom (10);  // Spacing
-    settingsRow.removeFromLeft (getWidth() - 200);  // Align right
+    settingsRow.removeFromLeft (contentComponent.getWidth() - 200 - 24);  // Align right (accounting for margins)
     settingsButton.setBounds (settingsRow.removeFromLeft (180));
 
 }
@@ -459,8 +513,8 @@ void PtV2AEditor::startTimelineSelectionRead()
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         return;
     }
     
@@ -492,8 +546,8 @@ void PtV2AEditor::startTimelineSelectionRead()
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         ptslProcess.reset();
         return;
     }
@@ -532,8 +586,8 @@ void PtV2AEditor::startTimelineSelectionReadOnly()
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         return;
     }
     
@@ -564,8 +618,8 @@ void PtV2AEditor::startTimelineSelectionReadOnly()
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         ptslProcess.reset();
         return;
     }
@@ -624,8 +678,8 @@ void PtV2AEditor::timerCallback()
                     "OK"
                 );
                 
-                renderButton.setEnabled (true);
-                renderButton.setButtonText ("Render Audio");
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Render Audio");
                 return;
             }
             
@@ -658,8 +712,8 @@ void PtV2AEditor::timerCallback()
             {
                 stopTimer();
                 currentAsyncState = AsyncState::Idle;
-                recommendSoundsButton.setEnabled (true);
-                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Recommend Sounds");
                 return;
             }
             
@@ -682,8 +736,8 @@ void PtV2AEditor::timerCallback()
                     "OK"
                 );
                 
-                recommendSoundsButton.setEnabled (true);
-                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Recommend Sounds");
                 return;
             }
             
@@ -752,8 +806,8 @@ void PtV2AEditor::timerCallback()
                                 error,
                                 "OK"
                             );
-                            recommendSoundsButton.setEnabled (true);
-                            recommendSoundsButton.setButtonText ("Recommend Sounds");
+                            actionButton.setEnabled (true);
+                            actionButton.setButtonText ("Recommend Sounds");
                             return;
                         }
                     }
@@ -769,8 +823,8 @@ void PtV2AEditor::timerCallback()
                     "No video or text prompt available for sound search.",
                     "OK"
                 );
-                recommendSoundsButton.setEnabled (true);
-                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Recommend Sounds");
                 return;
             }
             
@@ -895,8 +949,8 @@ void PtV2AEditor::timerCallback()
                 
                 juce::Logger::writeToLog ("Clip bounds read timed out - aborting");
                 
-                renderButton.setEnabled (true);
-                renderButton.setButtonText ("Render Audio");
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Render Audio");
                 return;
             }
             
@@ -953,8 +1007,8 @@ void PtV2AEditor::timerCallback()
                     "OK"
                 );
                 
-                recommendSoundsButton.setEnabled (true);
-                recommendSoundsButton.setButtonText ("Recommend Sounds");
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Recommend Sounds");
                 return;
             }
             
@@ -983,8 +1037,8 @@ void PtV2AEditor::timerCallback()
             currentAsyncState = AsyncState::Idle;
             
             // Re-enable button
-            recommendSoundsButton.setEnabled (true);
-            recommendSoundsButton.setButtonText ("Recommend Sounds");
+            actionButton.setEnabled (true);
+            actionButton.setButtonText ("Recommend Sounds");
             
             // Handle results
             handleSoundSearchResult (jsonText);
@@ -1024,8 +1078,8 @@ void PtV2AEditor::timerCallback()
                     "OK"
                 );
                 
-                renderButton.setEnabled (true);
-                renderButton.setButtonText ("Render Audio");
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Render Audio");
                 return;
             }
             
@@ -1150,8 +1204,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         return;
     }
     
@@ -1180,8 +1234,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         return;
     }
     
@@ -1214,8 +1268,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 "OK"
             );
             
-            renderButton.setEnabled (true);
-            renderButton.setButtonText ("Render Audio");
+            actionButton.setEnabled (true);
+            actionButton.setButtonText ("Render Audio");
             return;
         }
         
@@ -1239,7 +1293,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
             juce::Logger::writeToLog ("Import position: " + inTime + " (" + juce::String (inSeconds, 2) + "s)");
             juce::Logger::writeToLog ("Prompt: " + prompt.getText());
             
-            renderButton.setButtonText ("Generating Audio...");
+            actionButton.setButtonText ("Generating Audio...");
             
             // Start T2A generation (no video processing needed)
             startT2AAudioGeneration (prompt.getText(), t2aDuration);
@@ -1268,8 +1322,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 "OK"
             );
             
-            renderButton.setEnabled (true);
-            renderButton.setButtonText ("Render Audio");
+            actionButton.setEnabled (true);
+            actionButton.setButtonText ("Render Audio");
             return;
         }
         
@@ -1289,8 +1343,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 "OK"
             );
             
-            renderButton.setEnabled (true);
-            renderButton.setButtonText ("Render Audio");
+            actionButton.setEnabled (true);
+            actionButton.setButtonText ("Render Audio");
             return;
         }
         
@@ -1319,8 +1373,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 "OK"
             );
             
-            renderButton.setEnabled (true);
-            renderButton.setButtonText ("Render Audio");
+            actionButton.setEnabled (true);
+            actionButton.setButtonText ("Render Audio");
             currentAsyncState = AsyncState::Idle;
             return;
         }
@@ -1377,7 +1431,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
            // juce::Logger::writeToLog ("Manual offset on TRIMMED clip - reading clip bounds first...");
             // juce::Logger::writeToLog ("Manual offset value: " + manualOffset);
             
-            // renderButton.setButtonText ("Reading Clip Bounds...");
+            // actionButton.setButtonText ("Reading Clip Bounds...");
             
             // Store video and prompt for later use (after clip bounds are read)
             // currentVideoPath = videoPath;
@@ -1403,7 +1457,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
             juce::Logger::writeToLog ("Clip is trimmed - automatically reading clip bounds from Pro Tools...");
         
             
-            renderButton.setButtonText ("Reading Clip Bounds...");
+            actionButton.setButtonText ("Reading Clip Bounds...");
             
             // Store video and prompt for later use (after clip bounds are read)
             currentVideoPath = videoPath;
@@ -1428,7 +1482,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         //======================================================================
         // Step 5: Start async audio generation (NO PTSL import yet!)
         //======================================================================
-        renderButton.setButtonText ("Generating Audio...");
+        actionButton.setButtonText ("Generating Audio...");
         juce::Logger::writeToLog ("Starting async audio generation...");
         juce::Logger::writeToLog ("Selected clip: " + inTime + " - " + outTime);
         juce::Logger::writeToLog ("Duration: " + juce::String (durationSeconds, 2) + "s");
@@ -1456,8 +1510,8 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         currentAsyncState = AsyncState::Idle;
     }
 }
@@ -1547,8 +1601,8 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         currentAsyncState = AsyncState::Idle;
         return;
     }
@@ -1615,8 +1669,8 @@ void PtV2AEditor::startT2AAudioGeneration (const juce::String& promptText, float
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         currentAsyncState = AsyncState::Idle;
         return;
     }
@@ -1762,7 +1816,7 @@ void PtV2AEditor::handleClipBoundsResult (const juce::String& output)
     
     // Start audio generation (will use clipStartSeconds and clipEndSeconds)
     startAudioGeneration (currentVideoPath, currentPrompt); 
-    renderButton.setButtonText ("Generating Audio...");
+    actionButton.setButtonText ("Generating Audio...");
 }
 
 //==============================================================================
@@ -1887,8 +1941,8 @@ void PtV2AEditor::checkAudioGenerationComplete()
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         return;
     }
     
@@ -1918,7 +1972,7 @@ void PtV2AEditor::checkAudioGenerationComplete()
         juce::Logger::writeToLog ("Output file: " + expectedAudioOutputPath);
         
         stopTimer();
-        renderButton.setButtonText ("Importing Audio...");
+        actionButton.setButtonText ("Importing Audio...");
         
         // Sound search now triggered manually via "Recommend Sounds" button
         
@@ -1952,7 +2006,7 @@ void PtV2AEditor::checkAudioGenerationComplete()
         juce::Logger::writeToLog ("Filename: " + newestWavFile.getFileName());
         
         stopTimer();
-        renderButton.setButtonText ("Importing Audio...");
+        actionButton.setButtonText ("Importing Audio...");
         
         // Sound search now triggered manually via "Recommend Sounds" button
         
@@ -1991,8 +2045,8 @@ void PtV2AEditor::startAudioImport (const juce::String& audioPath)
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         currentAsyncState = AsyncState::Idle;
         return;
     }
@@ -2045,8 +2099,8 @@ void PtV2AEditor::startAudioImport (const juce::String& audioPath)
             "OK"
         );
         
-        renderButton.setEnabled (true);
-        renderButton.setButtonText ("Render Audio");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Render Audio");
         ptslProcess.reset();
         currentAsyncState = AsyncState::Idle;
         return;
@@ -2102,8 +2156,8 @@ void PtV2AEditor::handleAudioImportResult (const juce::String& output)
         );
     }
     
-    renderButton.setEnabled (true);
-    renderButton.setButtonText ("Render Audio");
+    actionButton.setEnabled (true);
+    actionButton.setButtonText ("Render Audio");
 }
 
 //==============================================================================
@@ -2145,6 +2199,58 @@ void PtV2AEditor::handleGenerationModeChange()
 }
 
 //==============================================================================
+// Workflow Mode Change Handler
+//==============================================================================
+void PtV2AEditor::handleWorkflowModeChange()
+{
+    // Update current workflow mode
+    currentWorkflowMode = audioGenModeButton.getToggleState() 
+        ? WorkflowMode::AudioGeneration 
+        : WorkflowMode::SoundRecommendation;
+    
+    bool isAudioGen = (currentWorkflowMode == WorkflowMode::AudioGeneration);
+    
+    juce::Logger::writeToLog ("=== Workflow Mode Changed ===");
+    juce::Logger::writeToLog ("New mode: " + juce::String (isAudioGen ? "Audio Generation" : "Sound Recommendation"));
+    
+    // Update action button text and appearance
+    if (isAudioGen)
+    {
+        actionButton.setButtonText ("Render Audio");
+    }
+    else
+    {
+        actionButton.setButtonText ("Recommend Sounds");
+    }
+    
+    // Enable/disable fields based on workflow mode
+    // Prompt is always active (used in both modes)
+    
+    // Audio Generation specific fields (disabled in Sound Recommendation mode)
+    negativePromptInput.setEnabled (isAudioGen);
+    negativePromptLabel.setEnabled (isAudioGen);
+    
+    seedInput.setEnabled (isAudioGen);
+    seedLabel.setEnabled (isAudioGen);
+    
+    v2aModeButton.setEnabled (isAudioGen);
+    t2aModeButton.setEnabled (isAudioGen);
+    
+    // Duration only enabled in Audio Gen AND T2A mode
+    bool isDurationEnabled = isAudioGen && isT2AMode;
+    durationComboBox.setEnabled (isDurationEnabled);
+    durationLabel.setEnabled (isDurationEnabled);
+    
+    modelProviderComboBox.setEnabled (isAudioGen && !isT2AMode);  // Locked to MMAudio in T2A
+    modelLabel.setEnabled (isAudioGen);
+    
+    modelSizeComboBox.setEnabled (isAudioGen);
+    modelSizeLabel.setEnabled (isAudioGen);
+    
+    repaint();
+}
+
+//==============================================================================
 // Model Selection Handler
 //==============================================================================
 void PtV2AEditor::handleModelProviderChange()
@@ -2159,8 +2265,8 @@ void PtV2AEditor::handleModelProviderChange()
     {
         // MMAudio model sizes
         modelSizeComboBox.addItem ("Large", 1);
-        modelSizeComboBox.addItem ("Medium", 2);
-        modelSizeComboBox.addItem ("Small", 3);
+        // modelSizeComboBox.addItem ("Medium", 2);
+        // modelSizeComboBox.addItem ("Small", 3);
         modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
         
         juce::Logger::writeToLog ("Model provider changed to: MMAudio");
@@ -2218,14 +2324,14 @@ void PtV2AEditor::showCredentialDialog()
                 auto testId = credentialWindow->getTextEditorContents ("clientId");
                 auto testSecret = credentialWindow->getTextEditorContents ("clientSecret");
                 
-                renderButton.setButtonText ("Testing...");
-                renderButton.setEnabled (false);
+                actionButton.setButtonText ("Testing...");
+                actionButton.setEnabled (false);
                 
                 juce::String error;
                 bool valid = processor.testCloudflareCredentials (testId, testSecret, &error);
                 
-                renderButton.setButtonText ("Render Audio");
-                renderButton.setEnabled (true);
+                actionButton.setButtonText ("Render Audio");
+                actionButton.setEnabled (true);
                 
                 if (valid)
                 {
@@ -2699,6 +2805,17 @@ void PtV2AEditor::handleSoundSearchResult (const juce::String& output)
         // Auto-show results on first load
         soundRecommendations.setVisible (true);
         juce::Logger::writeToLog ("Sound recommendations panel auto-shown");
+        
+        // Show success message
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::InfoIcon,
+            "Sound Search Complete!",
+            "Found " + juce::String (sounds.size()) + " matching sounds from BBC Sound Archive.\n\n"
+            "-> Search complete\n"
+            "-> Results loaded\n\n"
+            "Check the Database Recommendations panel below to import sounds.",
+            "OK"
+        );
     }
 }
 
@@ -2759,8 +2876,8 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
     currentPrompt = promptText;
     
     // Disable button during search
-    recommendSoundsButton.setEnabled (false);
-    recommendSoundsButton.setButtonText ("Searching...");
+    actionButton.setEnabled (false);
+    actionButton.setButtonText ("Searching...");
     
     // For V2A mode: start async PTSL workflow (same as render button)
     // For T2A mode: trigger search immediately with text-only
@@ -2782,8 +2899,9 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
         // Re-enable button after a delay
         juce::Timer::callAfterDelay (2000, [this]
         {
-            recommendSoundsButton.setEnabled (true);
-            recommendSoundsButton.setButtonText ("Recommend Sounds");
+            actionButton.setEnabled (true);
+            actionButton.setButtonText ("Recommend Sounds");
         });
     }
 }
+

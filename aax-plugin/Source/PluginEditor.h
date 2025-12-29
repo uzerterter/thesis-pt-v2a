@@ -82,18 +82,37 @@ private:
     //==============================================================================
     // GUI Components
     //==============================================================================
-
     
     /**
-     * Button to trigger audio generation
-     * States:
-     *   - "Render Audio" (default, ready)
-     *   - "Checking API..." (validating connection)
-     *   - "Generating..." (processing, disabled)
-     * 
-     * TODO Add cancel functionality for long operations
+     * Viewport for scrolling the plugin UI
+     * Allows plugin content to exceed fixed Pro Tools plugin window height
      */
-    juce::TextButton renderButton { "Render Audio" };
+    juce::Viewport viewport;
+    
+    /**
+     * Content component that holds all UI elements
+     * Placed inside viewport for scrolling
+     */
+    juce::Component contentComponent;
+    
+    //==============================================================================
+    // Workflow Mode Selection
+    //==============================================================================
+    
+    /**
+     * Mode selection radio buttons
+     * User chooses between Audio Generation (Generative AI) or Sound Recommendation (Database)
+     */
+    juce::Label modeLabel { {}, "Mode:" };
+    juce::ToggleButton audioGenModeButton { "Audio Generation (Generative AI)" };
+    juce::ToggleButton soundRecModeButton { "Sound Recommendation (from Database)" };
+    
+    /**
+     * Unified action button - changes function based on selected mode
+     * Audio Generation mode: "Render Audio"
+     * Sound Recommendation mode: "Recommend Sounds"
+     */
+    juce::TextButton actionButton { "Render Audio" };
     
     /**
      * Button to trigger audio generation with dummy video (for presentation)
@@ -120,15 +139,9 @@ private:
     /**
      * Sound recommendations component for displaying BBC Sound Search results
      * Shows search results with navigation, preview, and import functionality
-     * Placed below the Render button
+     * Placed below the action button
      */
     SoundRecommendationsComponent soundRecommendations;
-    
-    /**
-     * Button to manually trigger sound recommendations search
-     * Searches BBC Sound Archive for sounds matching video and prompt
-     */
-    juce::TextButton recommendSoundsButton { "Recommend Sounds" };
     
     /**
      * Toggle button to show/hide sound recommendations
@@ -294,6 +307,12 @@ private:
      * Updates UI state: enables/disables duration selection and model provider
      */
     void handleGenerationModeChange();
+    
+    /**
+     * Handle workflow mode change (Audio Generation <-> Sound Recommendation)
+     * Updates UI: enables/disables relevant fields, changes action button text
+     */
+    void handleWorkflowModeChange();
     
     /**
      * Handle T2A render button click - text-to-audio workflow without video
@@ -479,6 +498,15 @@ private:
     };
     
     AsyncState currentAsyncState = AsyncState::Idle;
+    
+    /** Workflow mode selection */
+    enum class WorkflowMode
+    {
+        AudioGeneration,
+        SoundRecommendation
+    };
+    
+    WorkflowMode currentWorkflowMode = WorkflowMode::AudioGeneration;
     
     /** PTSL process handle (for async timeline selection and import) */
     std::unique_ptr<juce::ChildProcess> ptslProcess;

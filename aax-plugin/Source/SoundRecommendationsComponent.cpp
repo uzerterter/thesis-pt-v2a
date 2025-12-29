@@ -66,33 +66,28 @@ void SoundRecommendationsComponent::resized()
     
     area.removeFromTop (12);  // Spacing
     
-    // First button row: [◀ Prev]   [▶ Preview]   [Next ▶]
-    auto firstButtonRow = area.removeFromTop (28);
+    // Button row: [◀ Prev] ... [▶ Preview] [↓ Import] ... [Next ▶]
+    auto buttonRow = area.removeFromTop (28);
     
     const int buttonWidth = 100;
     const int spacing = 20;
     
-    // Calculate total width and center the buttons
-    const int totalWidth = buttonWidth * 3 + spacing * 2;
-    const int startX = (firstButtonRow.getWidth() - totalWidth) / 2;
+    // Prev button at left edge w padding
+    buttonRow.removeFromLeft (20);
+    prevButton.setBounds (buttonRow.removeFromLeft (buttonWidth));
+
+    // Next button at right edge w padding
+    buttonRow.removeFromRight (20);
+    nextButton.setBounds (buttonRow.removeFromRight (buttonWidth));
     
-    auto prevArea = firstButtonRow.removeFromLeft (startX + buttonWidth);
-    prevArea.removeFromRight (buttonWidth);
-    prevButton.setBounds (prevArea);
+    // Center Preview and Import in remaining space
+    const int centerWidth = buttonWidth * 2 + spacing;
+    const int centerStartX = (buttonRow.getWidth() - centerWidth) / 2;
     
-    firstButtonRow.removeFromLeft (spacing);
-    previewButton.setBounds (firstButtonRow.removeFromLeft (buttonWidth));
-    
-    firstButtonRow.removeFromLeft (spacing);
-    nextButton.setBounds (firstButtonRow.removeFromLeft (buttonWidth));
-    
-    area.removeFromTop (8);  // Spacing
-    
-    // Second button row: [↓ Import] (centered)
-    auto secondButtonRow = area.removeFromTop (28);
-    const int importWidth = 120;
-    const int importX = (secondButtonRow.getWidth() - importWidth) / 2;
-    importButton.setBounds (secondButtonRow.removeFromLeft (importX + importWidth).removeFromRight (importWidth));
+    buttonRow.removeFromLeft (centerStartX);
+    previewButton.setBounds (buttonRow.removeFromLeft (buttonWidth));
+    buttonRow.removeFromLeft (spacing);
+    importButton.setBounds (buttonRow.removeFromLeft (buttonWidth));
 }
 
 //==============================================================================
