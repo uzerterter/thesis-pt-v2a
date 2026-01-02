@@ -278,7 +278,7 @@ Examples:
     parser.add_argument(
         '--action',
         type=str,
-        choices=['generate', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'trim_video', 'validate_duration', 'get_duration', 'import_audio', 'clip_detect_and_trim', 'get_clip_bounds', 'test_cloudflare'],
+        choices=['generate', 't2a', 'check_ffmpeg', 'get_video_selection', 'get_video_file', 'get_video_info', 'trim_video', 'validate_duration', 'get_duration', 'import_audio', 'clip_detect_and_trim', 'get_clip_bounds', 'test_cloudflare'],
         default='generate',
         help='Action to perform (default: generate)'
     )
@@ -842,12 +842,13 @@ def main():
             sys.exit(1)
     
     # =============================================================================
-    # Standard Generation Mode (action == 'generate')
+    # Standard Generation Mode (action == 'generate' or 't2a')
     # =============================================================================
     
-    # CLI mode if video OR duration is provided (V2A or T2A)
-    is_cli_mode = args.video is not None or args.duration is not None
-    is_t2a_mode = args.video is None and args.duration is not None
+    # CLI mode if video OR duration is provided (V2A or T2A) OR explicit action is t2a
+    is_cli_mode = args.video is not None or args.duration is not None or args.action == 't2a'
+    # T2A mode: explicit via --action t2a OR inferred (no video + has duration)
+    is_t2a_mode = args.action == 't2a' or (args.video is None and args.duration is not None)
     
     if not quiet:
         print("🌐 MMAudio Standalone API Client")

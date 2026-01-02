@@ -4,12 +4,19 @@ Configuration constants and helpers for the MMAudio + HunyuanVideo-Foley clients
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
-# Paths
-_BASE_DIR = Path(__file__).resolve().parent
-_CONFIG_PATH = _BASE_DIR / "config.json"
+# Paths - use user config directory (matches C++ PluginProcessor path)
+if os.name == 'nt':  # Windows
+    _USER_CONFIG_DIR = Path(os.environ.get('APPDATA', '')) / 'PTV2A'
+else:  # macOS
+    # macOS: JUCE's userApplicationDataDirectory returns ~/Library/ (not ~/Library/Application Support/)
+    _USER_CONFIG_DIR = Path.home() / 'Library' / 'PTV2A'
+
+_USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+_CONFIG_PATH = _USER_CONFIG_DIR / "config.json"
 
 # =============================================================================
 # Shared Settings (Both MMAudio and HunyuanVideo-Foley)
@@ -34,7 +41,7 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
             "api_url_cloudflared": "https://sounds.linwig.de",
         },
     },
-    "cf_access_client_id": "",
+    "cf_access_client_id": "c8b837769349ee7caf35203cf3d34ea8.access",
     "cf_access_client_secret": "",
 }
 
@@ -42,12 +49,20 @@ _config_cache: Dict[str, Any] | None = None
 
 
 def _load_config() -> Dict[str, Any]:
-    """Load config.json, falling back to defaults."""
+    """Load config.json, falling back to defaults. Creates default config on first run."""
     global _config_cache
     if _config_cache is not None:
         return _config_cache
 
     cfg = CONFIG_DEFAULTS.copy()
+    
+    # Create default config file on first run (with Client ID pre-filled)
+    if not _CONFIG_PATH.exists():
+        try:
+            _CONFIG_PATH.write_text(json.dumps(CONFIG_DEFAULTS, indent=2))
+        except Exception:
+            pass  # If we can't write, we'll just use defaults
+    
     if _CONFIG_PATH.exists():
         try:
             data = json.loads(_CONFIG_PATH.read_text())

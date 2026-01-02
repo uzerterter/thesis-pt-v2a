@@ -2422,7 +2422,7 @@ void PtV2AEditor::showCredentialDialog()
                     juce::AlertWindow::showMessageBoxAsync (
                         juce::MessageBoxIconType::WarningIcon,
                         "Connection Failed",
-                        "\Could not connect to API.\n\n" + error,
+                        "Could not connect to API.\n\n" + error,
                         "OK"
                     );
                     
@@ -2699,8 +2699,27 @@ void PtV2AEditor::triggerSoundSearch (const juce::String& videoPath, const juce:
     
     // Generate session ID for this search
     auto sessionId = juce::Uuid().toDashedString().substring(0, 8);
-    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
-    auto outputFile = tempDir.getChildFile ("sound_search_" + sessionId + ".json");
+    
+    // Get Python's actual temp directory to match Python script behavior
+    juce::ChildProcess tempDirProcess;
+    juce::StringArray tempDirCmd;
+    tempDirCmd.add (pythonExe);
+    tempDirCmd.add ("-c");
+    tempDirCmd.add ("import tempfile; print(tempfile.gettempdir())");
+    
+    juce::String pythonTempDir;
+    if (tempDirProcess.start (tempDirCmd))
+    {
+        auto pythonTempOutput = tempDirProcess.readAllProcessOutput().trim();
+        if (pythonTempOutput.isNotEmpty())
+            pythonTempDir = pythonTempOutput;
+    }
+    
+    // Fallback to JUCE temp dir if Python call failed
+    if (pythonTempDir.isEmpty())
+        pythonTempDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getFullPathName();
+    
+    auto outputFile = juce::File(pythonTempDir).getChildFile ("sound_search_" + sessionId + ".json");
     
     // Store output file path for polling
     expectedSoundSearchOutputPath = outputFile.getFullPathName();
