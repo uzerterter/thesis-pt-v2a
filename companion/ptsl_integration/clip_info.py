@@ -366,6 +366,7 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
         timestamp = int(time.time() * 1000)  # milliseconds
         temp_name = f"__TEMP_SELECTED_{uuid.uuid4().hex}_{timestamp}__"
         print(f"[CLIP INFO] Temporarily renaming selected clip...", file=sys.stderr)
+        print(f"[CLIP INFO] Temp name: {temp_name}", file=sys.stderr)
         
         # Use ClipsList location
         if hasattr(pt, 'CLocation_ClipsList'):
@@ -373,11 +374,15 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
         else:
             clip_loc = pt.CL_ClipsList
         
+        print(f"[CLIP INFO] Using clip location: {clip_loc}", file=sys.stderr)
+        
         engine.rename_selected_clip(
             new_name=temp_name,
             rename_file=False,  # Don't rename the actual file!
             clip_location=clip_loc
         )
+        
+        print(f"[CLIP INFO] Rename command completed", file=sys.stderr)
         
         # Step 4: Get clip list AFTER rename to find the renamed clip
         print("[CLIP INFO] Finding renamed clip...", file=sys.stderr)
@@ -388,6 +393,13 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
             return None
         
         clips_after = response_after['clip_list']
+        print(f"[CLIP INFO] Found {len(clips_after)} clips after rename", file=sys.stderr)
+        
+        # Debug: Print all clip names to see what's there
+        for i, clip in enumerate(clips_after):
+            clip_name = clip.get('clip_full_name', 'N/A')
+            clip_type = clip.get('clip_type', 'N/A')
+            print(f"[CLIP INFO] Clip {i+1}: '{clip_name}' (type: {clip_type})", file=sys.stderr)
         
         # Find the clip with temporary name
         selected_clip = None
@@ -395,7 +407,9 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
         
         for clip in clips_after:
             # CRITICAL: Only look at video clips to avoid finding audio clips with same name
-            if clip.get('clip_type') != 'CType_Video':
+            clip_type = clip.get('clip_type', '')
+            # Support both CType_Video (older PT) and ClipType_Video (newer PT)
+            if clip_type not in ('CType_Video', 'ClipType_Video'):
                 continue
                 
             if clip.get('clip_full_name') == temp_name:
@@ -404,7 +418,8 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
                 # Find original name by matching clip_id
                 for old_clip in clips_before:
                     # CRITICAL: Only look at video clips
-                    if old_clip.get('clip_type') != 'CType_Video':
+                    old_clip_type = old_clip.get('clip_type', '')
+                    if old_clip_type not in ('CType_Video', 'ClipType_Video'):
                         continue
                         
                     if old_clip.get('clip_id') == clip.get('clip_id'):
@@ -422,7 +437,8 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
             # Look for any clip with same file_id that doesn't have temp name
             for old_clip in clips_before:
                 # CRITICAL: Only look at video clips
-                if old_clip.get('clip_type') != 'CType_Video':
+                old_clip_type = old_clip.get('clip_type', '')
+                if old_clip_type not in ('CType_Video', 'ClipType_Video'):
                     continue
                     
                 old_name = old_clip.get('clip_full_name', '')
