@@ -610,23 +610,38 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
         juce::Logger::writeToLog ("WARNING: Auto-detect clip boundaries in background (may cause deadlock from plugin!)");
     }
     
-    // Generate output directory path (filename will be generated server-side with prompt snippet)
-    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
-    auto outputsDir = tempDir.getChildFile ("pt_v2a_outputs");
+    // Output settings - use Python's actual temp directory for cross-platform compatibility
+    // Get Python's tempfile.gettempdir() by calling: python -c "import tempfile; print(tempfile.gettempdir())"
+    juce::ChildProcess tempDirProcess;
+    juce::StringArray tempDirCmd;
+    tempDirCmd.add (pythonExe);
+    tempDirCmd.add ("-c");
+    tempDirCmd.add ("import tempfile; print(tempfile.gettempdir())");
+    
+    juce::String pythonTempDir;
+    if (tempDirProcess.start (tempDirCmd))
+    {
+        auto pythonTempOutput = tempDirProcess.readAllProcessOutput().trim();
+        if (pythonTempOutput.isNotEmpty())
+            pythonTempDir = pythonTempOutput;
+    }
+    
+    // Fallback to JUCE temp dir if Python call failed
+    if (pythonTempDir.isEmpty())
+        pythonTempDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getFullPathName();
+    
+    auto outputsDir = juce::File(pythonTempDir).getChildFile ("pt_v2a_outputs");
     outputsDir.createDirectory();
     
-    // NOTE: We no longer generate a specific filename here
-    // The server will generate a descriptive name: {prompt_snippet}_{seed}_{model}_{timestamp}.wav
-    // Python client will save using the server-provided filename
-    // We just specify the output directory via --temp flag (client will use temp dir)
-    
-    // Don't pass --output (client will auto-generate path in temp dir with server name)
-    // The client will print the actual output path to stdout, which we'll read
+    // Generate unique filename: UUID for guaranteed uniqueness across platforms
+    auto sessionId = juce::Uuid().toDashedString().substring(0, 8);
+    auto outputFile = outputsDir.getChildFile ("v2a_" + sessionId + "_" + juce::String (seed) + ".wav");
     
     commandArray.add ("--output-format");
     commandArray.add ("wav");  // Pro Tools compatible
     
-    commandArray.add ("--temp");  // Use temp directory (pt_v2a_outputs)
+    commandArray.add ("--output");
+    commandArray.add (outputFile.getFullPathName());
     
     // Add full precision flag if enabled
     if (fullPrecision)
@@ -643,9 +658,8 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // NOTE: Removed --quiet for debugging - we want to see Python output!
     // commandArray.add ("--quiet");  // Minimal output for parsing
     
-    juce::Logger::writeToLog ("Starting audio generation (background process)...");
-    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
-    juce::Logger::writeToLog ("Server will generate filename with prompt snippet");
+    juce::Logger::writeToLog ("Starting V2A audio generation (background process)...");
+    juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
     juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
     
     // Execute subprocess in BACKGROUND (non-blocking)
@@ -675,17 +689,11 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // The OS will clean up the process when it finishes
     // Memory leak is acceptable here (one-time allocation per generation)
     
-    // NOTE: Server generates filename with prompt snippet, so we can't predict the exact name
-    // Instead, we return the output directory path
-    // The Editor will poll for the NEWEST .wav file in this directory
-    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
-    juce::Logger::writeToLog ("Editor will poll for newest WAV file in directory...");
-    
     if (errorMessage != nullptr)
         *errorMessage = "";  // Clear any previous error
     
-    // Return the output directory path (Editor will find the newest file there)
-    return outputsDir.getFullPathName();
+    // Return exact output file path (not directory)
+    return outputFile.getFullPathName();
 }
 
 //==============================================================================
@@ -741,6 +749,10 @@ juce::String PtV2AProcessor::generateAudioTextOnly (
     commandArray.add ("utf8");
     commandArray.add (scriptFile.getFullPathName());
     
+    // T2A mode: Specify action explicitly
+    commandArray.add ("--action");
+    commandArray.add ("t2a");
+    
     // T2A mode: NO --video parameter, but ADD --duration
     commandArray.add ("--duration");
     commandArray.add (juce::String (duration, 1));
@@ -775,20 +787,43 @@ juce::String PtV2AProcessor::generateAudioTextOnly (
     commandArray.add (modelArg);
     juce::Logger::writeToLog ("MMAudio model: " + modelArg);
     
-    // Output settings
-    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
-    auto outputsDir = tempDir.getChildFile ("pt_v2a_outputs");
+    // Output settings - use Python's actual temp directory for cross-platform compatibility
+    // Get Python's tempfile.gettempdir() by calling: python -c "import tempfile; print(tempfile.gettempdir())"
+    juce::ChildProcess tempDirProcess;
+    juce::StringArray tempDirCmd;
+    tempDirCmd.add (pythonExe);
+    tempDirCmd.add ("-c");
+    tempDirCmd.add ("import tempfile; print(tempfile.gettempdir())");
+    
+    juce::String pythonTempDir;
+    if (tempDirProcess.start (tempDirCmd))
+    {
+        auto pythonTempOutput = tempDirProcess.readAllProcessOutput().trim();
+        if (pythonTempOutput.isNotEmpty())
+            pythonTempDir = pythonTempOutput;
+    }
+    
+    // Fallback to JUCE temp dir if Python call failed
+    if (pythonTempDir.isEmpty())
+        pythonTempDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getFullPathName();
+    
+    auto outputsDir = juce::File(pythonTempDir).getChildFile ("pt_v2a_outputs");
     outputsDir.createDirectory();
+    
+    // Generate unique filename: UUID for guaranteed uniqueness across platforms
+    auto sessionId = juce::Uuid().toDashedString().substring(0, 8);
+    auto outputFile = outputsDir.getChildFile ("t2a_" + sessionId + "_" + juce::String (seed) + ".wav");
     
     commandArray.add ("--output-format");
     commandArray.add ("wav");
     
-    commandArray.add ("--temp");  // Use temp directory
+    commandArray.add ("--output");
+    commandArray.add (outputFile.getFullPathName());
     
     commandArray.add ("--verbose");  // Enable verbose output for debugging
     
     juce::Logger::writeToLog ("Starting T2A audio generation (background process)...");
-    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
+    juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
     juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
     
     // Start background process
@@ -812,8 +847,8 @@ juce::String PtV2AProcessor::generateAudioTextOnly (
     if (errorMessage != nullptr)
         *errorMessage = "";
     
-    // Return output directory path
-    return outputsDir.getFullPathName();
+    // Return exact output file path (not directory)
+    return outputFile.getFullPathName();
 }
 
 //==============================================================================
@@ -1078,7 +1113,7 @@ PtV2AProcessor::VideoSelectionInfo PtV2AProcessor::getVideoSelectionInfo()
     
     if (jsonOutput.isEmpty())
     {
-        result.errorMessage = "No JSON response found in Python output";
+        result.errorMessage = "No JSON response found in output";
         juce::Logger::writeToLog ("ERROR: " + result.errorMessage);
         juce::Logger::writeToLog ("Full output was: " + output);
         return result;
@@ -1512,22 +1547,57 @@ bool PtV2AProcessor::validateVideoDuration(
 
 juce::File PtV2AProcessor::getConfigFilePath()
 {
-    auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    auto contentsDir = pluginFile.getParentDirectory().getParentDirectory();
+    // Store config in user Application Support directory (writable location)
+    // macOS: ~/Library/Application Support/PTV2A/config.json
+    // Windows: %APPDATA%/PTV2A/config.json
+    auto appDataDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+    auto configDir = appDataDir.getChildFile ("PTV2A");
     
-    return contentsDir.getChildFile("Resources")
-                      .getChildFile("python")
-                      .getChildFile("Lib")
-                      .getChildFile("site-packages")
-                      .getChildFile("api")
-                      .getChildFile("config.json");
+    // Ensure directory exists
+    if (!configDir.exists())
+        configDir.createDirectory();
+    
+    return configDir.getChildFile ("config.json");
 }
 
 juce::String PtV2AProcessor::getCloudflareClientId()
 {
     auto configFile = getConfigFilePath();
     if (!configFile.existsAsFile())
-        return {};
+    {
+        // Create default config with full structure on first run
+        juce::DynamicObject::Ptr defaultConfig = new juce::DynamicObject();
+        defaultConfig->setProperty ("use_cloudflared", true);
+        
+        // Services
+        juce::DynamicObject::Ptr services = new juce::DynamicObject();
+        
+        juce::DynamicObject::Ptr mmaudio = new juce::DynamicObject();
+        mmaudio->setProperty ("api_url_direct", "http://localhost:8000");
+        mmaudio->setProperty ("api_url_cloudflared", "https://mmaudio.linwig.de");
+        services->setProperty ("mmaudio", juce::var (mmaudio.get()));
+        
+        juce::DynamicObject::Ptr hunyuan = new juce::DynamicObject();
+        hunyuan->setProperty ("api_url_direct", "http://localhost:8001");
+        hunyuan->setProperty ("api_url_cloudflared", "https://hyvf.linwig.de");
+        services->setProperty ("hunyuan", juce::var (hunyuan.get()));
+        
+        juce::DynamicObject::Ptr soundSearch = new juce::DynamicObject();
+        soundSearch->setProperty ("api_url_direct", "http://localhost:8002");
+        soundSearch->setProperty ("api_url_cloudflared", "https://sounds.linwig.de");
+        services->setProperty ("sound_search", juce::var (soundSearch.get()));
+        
+        defaultConfig->setProperty ("services", juce::var (services.get()));
+        
+        // Credentials
+        defaultConfig->setProperty ("cf_access_client_id", "c8b837769349ee7caf35203cf3d34ea8.access");
+        defaultConfig->setProperty ("cf_access_client_secret", "");
+        
+        auto jsonString = juce::JSON::toString (juce::var (defaultConfig.get()), true);
+        configFile.replaceWithText (jsonString);
+        
+        return "c8b837769349ee7caf35203cf3d34ea8.access";
+    }
     
     auto json = juce::JSON::parse (configFile.loadFileAsString());
     if (auto* root = json.getDynamicObject())
