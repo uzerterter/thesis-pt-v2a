@@ -161,8 +161,8 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     
     // Configure model size ComboBox (initial values for MMAudio)
     modelSizeComboBox.addItem ("Large", 1);
-    modelSizeComboBox.addItem ("Medium", 2);
-    modelSizeComboBox.addItem ("Small", 3);
+    // modelSizeComboBox.addItem ("Medium", 2);
+    // modelSizeComboBox.addItem ("Small", 3);
     modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
     contentComponent.addAndMakeVisible (modelSizeComboBox);
     
@@ -1345,9 +1345,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 juce::String::formatted (
                     "Timeline selection is only %.2f seconds.\n\n"
                     "MMAudio requires clip selections between 4-12 seconds.\n\n"
-                    "Please:\n"
-                    "1. Select a longer video clip\n"
-                    "2. Or extend your current selection (In/Out points)",
+                    "Please select a longer video clip\n",
                     durationSeconds
                 ),
                 "OK"
@@ -1368,7 +1366,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                     "MMAudio requires clip selections between 4-12 seconds.\n\n"
                     "Please:\n"
                     "1. Select a shorter video clip\n"
-                    "2. Or reduce your current selection (In/Out points)",
+                    "2. Cut your current clip into segments of 4-12 seconds each",
                     durationSeconds
                 ),
                 "OK"
