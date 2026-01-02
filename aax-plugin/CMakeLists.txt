@@ -97,7 +97,15 @@ set(COMPANION_DIR ${CMAKE_SOURCE_DIR}/../companion)
 set(RESOURCES_DIR ${CMAKE_SOURCE_DIR}/Resources)
 set(RESOURCES_PYTHON_DIR ${RESOURCES_DIR}/python)
 set(RESOURCES_PYTHON_SCRIPTS ${RESOURCES_PYTHON_DIR}/Scripts)
-set(RESOURCES_PYTHON_SITEPACKAGES ${RESOURCES_PYTHON_DIR}/Lib/site-packages)
+
+# Platform-specific site-packages path
+if(WIN32)
+    set(RESOURCES_PYTHON_SITEPACKAGES ${RESOURCES_PYTHON_DIR}/Lib/site-packages)
+elseif(APPLE)
+    set(RESOURCES_PYTHON_SITEPACKAGES ${RESOURCES_PYTHON_DIR}/lib/python3.12/site-packages)
+else()
+    set(RESOURCES_PYTHON_SITEPACKAGES ${RESOURCES_PYTHON_DIR}/lib/python3.12/site-packages)
+endif()
 
 # STEP 1: Sync Python scripts from companion/ to Resources/ (runs FIRST)
 add_custom_command(TARGET pt_v2a_AAX PRE_BUILD
