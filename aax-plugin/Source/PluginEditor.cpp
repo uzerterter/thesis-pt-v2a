@@ -1015,9 +1015,9 @@ void PtV2AEditor::timerCallback()
         {
             // Poll for sound search output file (fire-and-forget process, no ChildProcess to manage)
             // Check for timeout (80 seconds for video preprocessing + X-CLIP + downloads)
-            if (elapsed.inMilliseconds() > 80000)
+            if (elapsed.inMilliseconds() > 120000)
             {
-                juce::Logger::writeToLog ("ERROR: Sound search timed out after 80s");
+                juce::Logger::writeToLog ("ERROR: Sound search timed out after 120s");
                 
                 stopTimer();
                 currentAsyncState = AsyncState::Idle;
@@ -1030,7 +1030,7 @@ void PtV2AEditor::timerCallback()
                 juce::AlertWindow::showMessageBoxAsync (
                     juce::MessageBoxIconType::WarningIcon,
                     "Sound Search Timeout",
-                    "Sound search timed out after 80 seconds.\n\n"
+                    "Sound search timed out after 120 seconds.\n\n"
                     "This may be due to:\n"
                     "- Large video files\n"
                     "- Slow X-CLIP processing\n"
