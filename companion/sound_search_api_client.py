@@ -59,26 +59,25 @@ from api.sound_search_client import (
     check_api_health,
 )
 
+from cli.error_handler import safe_action_wrapper
+
 
 def action_health_check(args):
     """Check if Sound Search API is available"""
     log_debug("Action: health_check")
-    print("Checking Sound Search API health...")
     
-    if check_api_health(quiet=False):
+    if check_api_health(quiet=True):
         log_debug("Sound Search API is available")
-        print(json.dumps({
+        return {
             "status": "success",
             "message": "Sound Search API is available"
-        }))
-        return 0
+        }
     else:
         log_debug("ERROR: Sound Search API is not available")
-        print(json.dumps({
+        return {
             "status": "error",
             "message": "Sound Search API is not available"
-        }), file=sys.stderr)
-        return 1
+        }
 
 
 def action_search(args):
@@ -88,11 +87,10 @@ def action_search(args):
     
     if not args.video and not args.text:
         log_debug("ERROR: Must provide either --video or --text")
-        print(json.dumps({
+        return {
             "status": "error",
             "message": "Must provide either --video or --text"
-        }), file=sys.stderr)
-        return 1
+        }
     
     # Adjust text_weight based on input type
     effective_text_weight = args.text_weight
@@ -111,114 +109,86 @@ def action_search(args):
     # Perform search and download
     log_debug(f"Starting search with text_weight={effective_text_weight}, num_frames={args.num_frames}")
     
-    try:
-        log_debug("Calling search_and_download()...")
-        log_debug(f"  video_path: {args.video}")
-        log_debug(f"  text_query: {args.text}")
-        log_debug(f"  limit: {args.limit}")
-        
-        results = search_and_download(
-            video_path=args.video,
-            text_query=args.text,
-            limit=args.limit,
-            text_weight=effective_text_weight,
-            num_frames=args.num_frames,
-            session_id=args.session_id,
-            quiet=args.quiet,  # Use CLI argument (True when called from plugin)
-            verbose=args.verbose,  # Use CLI argument (False when called from plugin)
-        )
-        log_debug(f"search_and_download() returned: {type(results)} with {len(results) if results else 0} items")
-    except Exception as e:
-        log_debug(f"EXCEPTION in search_and_download(): {str(e)}")
-        import traceback
-        log_debug(traceback.format_exc())
-        print(json.dumps({
-            "status": "error",
-            "message": f"Exception during search: {str(e)}"
-        }), file=sys.stderr)
-        sys.stderr.flush()
-        return 1
+    log_debug("Calling search_and_download()...")
+    log_debug(f"  video_path: {args.video}")
+    log_debug(f"  text_query: {args.text}")
+    log_debug(f"  limit: {args.limit}")
+    
+    results = search_and_download(
+        video_path=args.video,
+        text_query=args.text,
+        limit=args.limit,
+        text_weight=effective_text_weight,
+        num_frames=args.num_frames,
+        session_id=args.session_id,
+        quiet=args.quiet,  # Use CLI argument (True when called from plugin)
+        verbose=args.verbose,  # Use CLI argument (False when called from plugin)
+    )
+    log_debug(f"search_and_download() returned: {type(results)} with {len(results) if results else 0} items")
     
     if not results:
         log_debug("ERROR: Search failed or no results found (results is None or empty)")
-        print(json.dumps({
+        return {
             "status": "error",
             "message": "Search failed or no results found"
-        }), file=sys.stderr)
-        sys.stderr.flush()
-        return 1
+        }
     
     log_debug(f"Search successful: {len(results)} results found")
     
     # Format output for plugin
-    try:
-        log_debug("Formatting JSON output...")
-        output = {
-            "status": "success",
-            "count": len(results),
-            "session_id": args.session_id,
-            "results": []
-        }
-        
-        for i, sound in enumerate(results, 1):
-            log_debug(f"Formatting sound {i}/{len(results)}: ID={sound.get('id')}")
-            output["results"].append({
-                "id": sound["id"],
-                "description": sound["description"],
-                "category": sound["category"],
-                "similarity": sound["similarity"],
-                "local_path": sound["local_path"],
-                "filename": Path(sound["local_path"]).name
-            })
-        
-        log_debug(f"Formatting output with {len(output['results'])} results")
-        json_output = json.dumps(output, indent=2)
-        log_debug(f"JSON output length: {len(json_output)} chars")
-        log_debug(f"First 200 chars of JSON: {json_output[:200]}")
-        
-        # CRITICAL DEBUG: Write full JSON to log file for inspection
-        log_debug("=== FULL JSON OUTPUT START ===")
-        log_debug(json_output)
-        log_debug("=== FULL JSON OUTPUT END ===")
-        
-        # Determine output file path
-        if args.output_json:
-            output_file = args.output_json
+    log_debug("Formatting JSON output...")
+    output = {
+        "status": "success",
+        "count": len(results),
+        "session_id": args.session_id,
+        "results": []
+    }
+    
+    for i, sound in enumerate(results, 1):
+        log_debug(f"Formatting sound {i}/{len(results)}: ID={sound.get('id')}")
+        output["results"].append({
+            "id": sound["id"],
+            "description": sound["description"],
+            "category": sound["category"],
+            "similarity": sound["similarity"],
+            "local_path": sound["local_path"],
+            "filename": Path(sound["local_path"]).name
+        })
+    
+    log_debug(f"Formatting output with {len(output['results'])} results")
+    json_output = json.dumps(output, indent=2)
+    log_debug(f"JSON output length: {len(json_output)} chars")
+    log_debug(f"First 200 chars of JSON: {json_output[:200]}")
+    
+    # CRITICAL DEBUG: Write full JSON to log file for inspection
+    log_debug("=== FULL JSON OUTPUT START ===")
+    log_debug(json_output)
+    log_debug("=== FULL JSON OUTPUT END ===")
+    
+    # Determine output file path
+    if args.output_json:
+        output_file = args.output_json
+    else:
+        # Write to temp dir with session ID for easy polling
+        import tempfile
+        if args.session_id:
+            output_file = os.path.join(tempfile.gettempdir(), f"sound_search_{args.session_id}.json")
         else:
-            # Write to temp dir with session ID for easy polling
-            import tempfile
-            if args.session_id:
-                output_file = os.path.join(tempfile.gettempdir(), f"sound_search_{args.session_id}.json")
-            else:
-                output_file = os.path.join(tempfile.gettempdir(), "sound_search_results.json")
-        
-        # Write results to file (avoids stdout/stderr blocking issues on Windows)
-        try:
-            log_debug(f"Writing results to file: {output_file}")
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(json_output)
-            log_debug(f"✓ Results written to: {output_file}")
-            
-            # Print file path to stdout for plugin to read
-            print(output_file)
-            sys.stdout.flush()
-            
-        except Exception as e:
-            log_debug(f"✗ File write failed: {e}")
-            return 1
-        
-        log_debug("=== Output operation completed successfully ===")
-        return 0
-    except Exception as e:
-        log_debug(f"EXCEPTION during JSON formatting: {str(e)}")
-        import traceback
-        log_debug(traceback.format_exc())
-        print(json.dumps({
-            "status": "error",
-            "message": f"JSON formatting error: {str(e)}"
-        }), file=sys.stderr)
-        sys.stderr.flush()
-        return 1
+            output_file = os.path.join(tempfile.gettempdir(), "sound_search_results.json")
+    
+    # Write results to file (avoids stdout/stderr blocking issues on Windows)
+    log_debug(f"Writing results to file: {output_file}")
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(json_output)
+    log_debug(f"✓ Results written to: {output_file}")
+    
+    # Print file path to stdout for plugin to read
+    # Note: safe_action_wrapper will wrap this in JSON, so we return dict
+    log_debug("=== Output operation completed successfully ===")
+    return {
+        "status": "success",
+        "output_file": output_file
+    }
 
 
 def action_download(args):
@@ -227,11 +197,10 @@ def action_download(args):
     
     if not args.sound_id:
         log_debug("ERROR: Must provide --sound-id")
-        print(json.dumps({
+        return {
             "status": "error",
             "message": "Must provide --sound-id"
-        }), file=sys.stderr)
-        return 1
+        }
     
     local_path = download_sound(
         sound_id=args.sound_id,
@@ -242,20 +211,18 @@ def action_download(args):
     
     if not local_path:
         log_debug(f"ERROR: Failed to download sound {args.sound_id}")
-        print(json.dumps({
+        return {
             "status": "error",
             "message": f"Failed to download sound {args.sound_id}"
-        }), file=sys.stderr)
-        return 1
+        }
     
     log_debug(f"Download successful: {local_path}")
-    print(json.dumps({
+    return {
         "status": "success",
         "sound_id": args.sound_id,
         "local_path": local_path,
         "filename": Path(local_path).name
-    }))
-    return 0
+    }
 
 
 def action_cleanup(args):
@@ -264,28 +231,25 @@ def action_cleanup(args):
     
     if not args.session_id:
         log_debug("ERROR: Must provide --session-id")
-        print(json.dumps({
+        return {
             "status": "error",
             "message": "Must provide --session-id"
-        }), file=sys.stderr)
-        return 1
+        }
     
     success = cleanup_session(args.session_id, quiet=args.quiet)
     
     if success:
         log_debug(f"Session {args.session_id} cleaned up successfully")
-        print(json.dumps({
+        return {
             "status": "success",
             "message": f"Session {args.session_id} cleaned up"
-        }))
-        return 0
+        }
     else:
         log_debug(f"ERROR: Failed to clean up session {args.session_id}")
-        print(json.dumps({
+        return {
             "status": "error",
             "message": f"Failed to clean up session {args.session_id}"
-        }), file=sys.stderr)
-        return 1
+        }
 
 
 def main():
@@ -386,19 +350,18 @@ def main():
     
     # Route to appropriate action handler
     if args.action == 'health':
-        return action_health_check(args)
+        return safe_action_wrapper(lambda: action_health_check(args))
     elif args.action == 'search':
-        return action_search(args)
+        return safe_action_wrapper(lambda: action_search(args))
     elif args.action == 'download':
-        return action_download(args)
+        return safe_action_wrapper(lambda: action_download(args))
     elif args.action == 'cleanup':
-        return action_cleanup(args)
+        return safe_action_wrapper(lambda: action_cleanup(args))
     else:
-        print(json.dumps({
+        return safe_action_wrapper(lambda: {
             "status": "error",
             "message": f"Unknown action: {args.action}"
-        }), file=sys.stderr)
-        return 1
+        })
 
 
 if __name__ == "__main__":

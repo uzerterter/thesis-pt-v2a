@@ -20,18 +20,19 @@ from .config import (
     use_cloudflared,
 )
 
-# Import video preprocessing from video module
+# Import video preprocessing and validation from video module
 try:
     # Try relative import first (when called as module)
-    from ..video.ffmpeg import downscale_video
+    from ..video.ffmpeg import downscale_video, get_video_duration
 except (ImportError, ValueError):
     try:
         # Fallback: add parent directory to path (when called as script)
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from video.ffmpeg import downscale_video
+        from video.ffmpeg import downscale_video, get_video_duration
     except ImportError:
         downscale_video = None
+        get_video_duration = None
 
 # Default settings
 DEFAULT_LIMIT = 5
@@ -180,7 +181,7 @@ def search_sounds(
             files=files,
             data=data,
             headers=get_cf_headers(),
-            timeout=60
+            timeout=120  # Increased from 60s to match C++ timeout
         )
         response.raise_for_status()
         

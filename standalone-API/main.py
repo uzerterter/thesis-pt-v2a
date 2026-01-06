@@ -732,6 +732,17 @@ async def root():
         "version": "1.0.0"
     }
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for API availability verification"""
+    return {
+        "status": "ok",
+        "service": "MMAudio Standalone API",
+        "device": device,
+        "model_loaded": model is not None,
+        "version": "1.0.0"
+    }
+
 @app.get("/models")
 async def list_models():
     """List available MMAudio models"""

@@ -85,6 +85,7 @@ from cli.actions import (
     action_get_duration,
     action_import_audio,
 )
+from cli.error_handler import safe_action_wrapper, wrap_main_with_json_error_handling
 
 # Legacy configuration (for backwards compatibility)
 # Use relative path for cross-platform compatibility
@@ -438,35 +439,23 @@ def main():
     
     if args.action == 'check_ffmpeg':
         """Check FFmpeg availability"""
-        result = action_check_ffmpeg(log_debug_func=log_debug)
-        print(json.dumps(result))
-        return 0 if result['available'] else 1
+        return safe_action_wrapper(lambda: action_check_ffmpeg(log_debug_func=log_debug))
     
     elif args.action == 'get_video_selection':
         """Get timeline selection from Pro Tools"""
-        print(f"=== DEBUG: get_video_selection action START ===", file=sys.stderr)
-        sys.stderr.flush()
+        def get_video_selection_logic():
+            log_debug("=== DEBUG: get_video_selection action START ===")
+            result = get_video_timeline_selection()
+            log_debug(f"=== DEBUG: PTSL call completed, result={result['success']} ===")
+            return result
         
-        result = get_video_timeline_selection()
-        
-        print(f"=== DEBUG: PTSL call completed, result={result['success']} ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        # Print JSON to stdout (will be in log file)
-        print(json.dumps(result))
-        sys.stdout.flush()  # Force flush to ensure JSON is written
-        
-        print(f"=== DEBUG: JSON output sent, exiting... ===", file=sys.stderr)
-        sys.stderr.flush()
-        
-        # Force immediate exit to avoid hanging
-        sys.exit(0 if result['success'] else 1)
+        return safe_action_wrapper(get_video_selection_logic)
     
     elif args.action == 'get_clip_bounds':
         """Get clip boundaries from Pro Tools Clips List (async, fast, no deadlock!)"""
-        log_debug(f"=== DEBUG: get_clip_bounds action START ===")
-        
-        try:
+        def get_clip_bounds_logic():
+            log_debug(f"=== DEBUG: get_clip_bounds action START ===")
+            
             # Import PTSL
             from ptsl import open_engine
             from ptsl_integration.clip_info import (
@@ -492,13 +481,11 @@ def main():
                 clip_info = get_clip_info_for_selected_video(engine)
                 
                 if not clip_info:
-                    result = {
+                    log_debug("ERROR: No video clip found in Clips List")
+                    return {
                         'success': False,
                         'error': 'No video clip found in Clips List'
                     }
-                    log_debug(f"ERROR: {result['error']}")
-                    print(json.dumps(result))
-                    sys.exit(1)
                 
                 # Calculate trim points
                 trim_info = calculate_trim_points_from_clip(clip_info, fps)
@@ -515,135 +502,106 @@ def main():
                 }
                 
                 log_debug(f"Clip bounds: {result['start_seconds']}s - {result['end_seconds']}s")
-                print(json.dumps(result))
-                sys.stdout.flush()
-                sys.exit(0)
-                
-        except Exception as e:
-            import traceback
-            error_msg = str(e)
-            log_debug(f"ERROR: {error_msg}")
-            log_debug(traceback.format_exc())
-            
-            result = {
-                'success': False,
-                'error': error_msg
-            }
-            print(json.dumps(result))
-            sys.stdout.flush()
-            sys.exit(1)
+                return result
+        
+        return safe_action_wrapper(get_clip_bounds_logic)
     
     elif args.action == 'get_video_info':
         """Get timeline selection AND video file in one PTSL call (faster!)"""
-        result = action_get_video_info(log_debug_func=log_debug)
-        print(json.dumps(result))
-        sys.stdout.flush()
-        sys.exit(0 if result['success'] else 1)
+        return safe_action_wrapper(lambda: action_get_video_info(log_debug_func=log_debug))
     
     elif args.action == 'get_video_file':
         """Get video file path from Pro Tools"""
-        result = get_video_file_from_protools()
-        print(json.dumps(result))
-        return 0 if result['success'] else 1
+        return safe_action_wrapper(lambda: get_video_file_from_protools())
     
     elif args.action == 'trim_video':
         """Trim video segment"""
-        if not args.video:
-            print(json.dumps({
-                'success': False,
-                'error': '--video argument required for trim_video action'
-            }))
-            return 1
+        def trim_video_logic():
+            if not args.video:
+                return {
+                    'success': False,
+                    'error': '--video argument required for trim_video action'
+                }
+            
+            if args.start_time is None or args.end_time is None:
+                return {
+                    'success': False,
+                    'error': '--start-time and --end-time required for trim_video action'
+                }
+            
+            return trim_video_segment(
+                video_path=args.video,
+                start_seconds=args.start_time,
+                end_seconds=args.end_time,
+                output_path=args.output
+            )
         
-        if args.start_time is None or args.end_time is None:
-            print(json.dumps({
-                'success': False,
-                'error': '--start-time and --end-time required for trim_video action'
-            }))
-            return 1
-        
-        result = trim_video_segment(
-            video_path=args.video,
-            start_seconds=args.start_time,
-            end_seconds=args.end_time,
-            output_path=args.output
-        )
-        print(json.dumps(result))
-        return 0 if result['success'] else 1
+        return safe_action_wrapper(trim_video_logic)
     
     elif args.action == 'validate_duration':
         """Validate video duration"""
-        if args.duration is None:
-            print(json.dumps({
-                'valid': False,
-                'error': '--duration argument required for validate_duration action'
-            }))
-            return 1
+        def validate_duration_logic():
+            if args.duration is None:
+                return {
+                    'valid': False,
+                    'error': '--duration argument required for validate_duration action'
+                }
+            
+            return validate_video_duration(
+                duration_seconds=args.duration,
+                max_duration=args.max_duration
+            )
         
-        result = validate_video_duration(
-            duration_seconds=args.duration,
-            max_duration=args.max_duration
-        )
-        print(json.dumps(result))
-        return 0 if result['valid'] else 1
+        return safe_action_wrapper(validate_duration_logic)
     
     elif args.action == 'get_duration':
         """Get video file duration using FFprobe"""
-        result = action_get_duration(video_path=args.video, log_debug_func=log_debug)
-        print(json.dumps(result))
-        return 0 if result['success'] else 1
+        return safe_action_wrapper(lambda: action_get_duration(video_path=args.video, log_debug_func=log_debug))
     
     elif args.action == 'import_audio':
         """Import audio file to Pro Tools timeline"""
-        print(f"=== DEBUG: import_audio action START ===", file=sys.stderr)
-        sys.stderr.flush()
+        def import_audio_logic():
+            log_debug("=== DEBUG: import_audio action START ===")
+            
+            if not args.audio_path:
+                log_debug("ERROR: --audio-path argument required")
+                return {
+                    'success': False,
+                    'error': '--audio-path argument required for import_audio action'
+                }
+            
+            log_debug(f"Audio path: {args.audio_path}")
+            
+            # Get timecode if provided
+            timecode = args.timecode if hasattr(args, 'timecode') and args.timecode else None
+            if timecode:
+                log_debug(f"Import timecode: {timecode}")
+            else:
+                log_debug("Import timecode: Not specified (will use session start)")
+            
+            # Import to Pro Tools timeline
+            return action_import_audio(
+                audio_path=args.audio_path,
+                timecode=timecode,
+                log_debug_func=log_debug
+            )
         
-        if not args.audio_path:
-            error_result = {
-                'success': False,
-                'error': '--audio-path argument required for import_audio action'
-            }
-            print(f"ERROR: {error_result['error']}", file=sys.stderr)
-            print(json.dumps(error_result))
-            sys.exit(1)
-        
-        print(f"Audio path: {args.audio_path}", file=sys.stderr)
-        
-        # Get timecode if provided
-        timecode = args.timecode if hasattr(args, 'timecode') and args.timecode else None
-        if timecode:
-            print(f"Import timecode: {timecode}", file=sys.stderr)
-        else:
-            print(f"Import timecode: Not specified (will use session start)", file=sys.stderr)
-        
-        sys.stderr.flush()
-        
-        # Import to Pro Tools timeline
-        result = action_import_audio(
-            audio_path=args.audio_path,
-            timecode=timecode,
-            log_debug_func=log_debug
-        )
-        print(json.dumps(result))
-        sys.stdout.flush()
-        sys.exit(0 if result['success'] else 1)
+        return safe_action_wrapper(import_audio_logic)
     
     elif args.action == 'clip_detect_and_trim':
         """Detect clip boundaries and trim video (synchronous, foreground)"""
-        log_debug(f"=== DEBUG: clip_detect_and_trim action START ===")
-        
-        if not args.video:
-            error_result = {
-                'success': False,
-                'error': '--video argument required for clip_detect_and_trim action'
-            }
-            log_debug(f"ERROR: {error_result['error']}")
-            print(json.dumps(error_result))
-            sys.exit(1)
-        
-        log_debug(f"Video path: {args.video}")
-        
-        try:
+        def clip_detect_and_trim_logic():
+            log_debug("=== DEBUG: clip_detect_and_trim action START ===")
+            
+            if not args.video:
+                log_debug("ERROR: --video argument required")
+                return {
+                    'success': False,
+                    'error': '--video argument required for clip_detect_and_trim action'
+                }
+            
+            log_debug(f"Video path: {args.video}")
+            
             # Import PTSL modules
             log_debug("Importing PTSL...")
             from ptsl import open_engine
@@ -671,13 +629,11 @@ def main():
                 clip_info = get_clip_info_for_selected_video(engine)
                 
                 if not clip_info:
-                    error_result = {
+                    log_debug("ERROR: No video clip found in Clips List. Make sure a video clip is selected.")
+                    return {
                         'success': False,
                         'error': 'No video clip found in Clips List. Make sure a video clip is selected.'
                     }
-                    log_debug(f"ERROR: {error_result['error']}")
-                    print(json.dumps(error_result))
-                    sys.exit(1)
                 
                 clip_name = clip_info.get('clip_name', 'Unknown')
                 start_frame = clip_info['start_frame']
@@ -699,19 +655,18 @@ def main():
             )
             
             if not trim_result['success']:
-                error_result = {
+                error_msg = f"Video trimming failed: {trim_result['error']}"
+                log_debug(f"ERROR: {error_msg}")
+                return {
                     'success': False,
-                    'error': f"Video trimming failed: {trim_result['error']}"
+                    'error': error_msg
                 }
-                log_debug(f"ERROR: {error_result['error']}")
-                print(json.dumps(error_result))
-                sys.exit(1)
             
             trimmed_path = trim_result['output_path']
             log_debug(f"Trimmed video saved: {trimmed_path}")
             
             # Return success with trimmed video path
-            result = {
+            return {
                 'success': True,
                 'trimmed_video_path': trimmed_path,
                 'clip_name': clip_name,
@@ -719,45 +674,24 @@ def main():
                 'end_seconds': end_seconds,
                 'duration_seconds': trim_info['duration_seconds']
             }
-            
-            print(json.dumps(result))
-            sys.stdout.flush()
-            sys.exit(0)
-            
-        except Exception as e:
-            import traceback
-            error_msg = str(e)
-            traceback_str = traceback.format_exc()
-            
-            log_debug(f"ERROR: {error_msg}")
-            log_debug(f"Traceback:\n{traceback_str}")
-            
-            error_result = {
-                'success': False,
-                'error': error_msg,
-                'traceback': traceback_str
-            }
-            print(json.dumps(error_result))
-            sys.stdout.flush()
-            sys.exit(1)
+        
+        return safe_action_wrapper(clip_detect_and_trim_logic)
     
     elif args.action == 'test_cloudflare':
         """Test Cloudflare Access credentials"""
-        log_debug(f"=== DEBUG: test_cloudflare action START ===")
-        
-        if not args.cf_client_id or not args.cf_client_secret:
-            error_result = {
-                'success': False,
-                'error': '--cf-client-id and --cf-client-secret required for test_cloudflare action'
-            }
-            log_debug(f"ERROR: {error_result['error']}")
-            print(json.dumps(error_result))
-            sys.exit(1)
-        
-        log_debug(f"Client ID: {args.cf_client_id}")
-        log_debug(f"Client Secret: {args.cf_client_secret[:10]}...")
-        
-        try:
+        def test_cloudflare_logic():
+            log_debug("=== DEBUG: test_cloudflare action START ===")
+            
+            if not args.cf_client_id or not args.cf_client_secret:
+                log_debug("ERROR: --cf-client-id and --cf-client-secret required")
+                return {
+                    'success': False,
+                    'error': '--cf-client-id and --cf-client-secret required for test_cloudflare action'
+                }
+            
+            log_debug(f"Client ID: {args.cf_client_id}")
+            log_debug(f"Client Secret: {args.cf_client_secret[:10]}...")
+            
             import requests
             # get_api_url already imported at top of file (line 52)
             
@@ -773,7 +707,7 @@ def main():
                 "CF-Access-Client-Secret": args.cf_client_secret
             }
             
-            log_debug(f"Sending request with CF-Access headers...")
+            log_debug("Sending request with CF-Access headers...")
             response = requests.get(
                 f"{mmaudio_url}/",
                 headers=headers,
@@ -789,57 +723,30 @@ def main():
                     data = response.json()
                     log_debug(f"Response is JSON: {data}")
                     
-                    result = {
+                    log_debug("✓ Credential test SUCCESS")
+                    return {
                         'success': True,
                         'message': 'Credentials are valid and API is accessible',
                         'api_response': data
                     }
-                    log_debug("✓ Credential test SUCCESS")
-                    print(json.dumps(result))
-                    sys.exit(0)
                     
                 except ValueError:
                     # Response is HTML, authentication failed
                     error_msg = 'Credentials may be invalid or Access Policy misconfigured.'
                     log_debug(f"ERROR: {error_msg}")
-                    result = {
+                    return {
                         'success': False,
                         'error': error_msg
                     }
-                    print(json.dumps(result))
-                    sys.exit(1)
             else:
                 error_msg = f'API returned status code {response.status_code}. Check Cloudflare Access configuration.'
                 log_debug(f"ERROR: {error_msg}")
-                result = {
+                return {
                     'success': False,
                     'error': error_msg
                 }
-                print(json.dumps(result))
-                sys.exit(1)
-                
-        except requests.exceptions.RequestException as e:
-            error_msg = f'Connection failed: {str(e)}'
-            log_debug(f"ERROR: {error_msg}")
-            result = {
-                'success': False,
-                'error': error_msg
-            }
-            print(json.dumps(result))
-            sys.exit(1)
-        except Exception as e:
-            import traceback
-            error_msg = str(e)
-            traceback_str = traceback.format_exc()
-            log_debug(f"ERROR: {error_msg}")
-            log_debug(f"Traceback:\n{traceback_str}")
-            
-            result = {
-                'success': False,
-                'error': error_msg
-            }
-            print(json.dumps(result))
-            sys.exit(1)
+        
+        return safe_action_wrapper(test_cloudflare_logic)
     
     # =============================================================================
     # Standard Generation Mode (action == 'generate' or 't2a')

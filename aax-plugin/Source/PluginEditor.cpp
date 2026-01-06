@@ -149,22 +149,12 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     modelLabel.setJustificationType (juce::Justification::centredLeft);
     contentComponent.addAndMakeVisible (modelLabel);
     
-    modelSizeLabel.setJustificationType (juce::Justification::centredLeft);
-    contentComponent.addAndMakeVisible (modelSizeLabel);
-    
-    // Configure model provider ComboBox
+    // Configure model ComboBox with integrated sizes
     modelProviderComboBox.addItem ("MMAudio", 1);
-    modelProviderComboBox.addItem ("HunyuanVideo-Foley", 2);
+    modelProviderComboBox.addItem ("HunyuanVideo-Foley (XL)", 2);
+    modelProviderComboBox.addItem ("HunyuanVideo-Foley (XXL)", 3);
     modelProviderComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: MMAudio
-    modelProviderComboBox.onChange = [this] { handleModelProviderChange(); };
     contentComponent.addAndMakeVisible (modelProviderComboBox);
-    
-    // Configure model size ComboBox (initial values for MMAudio)
-    modelSizeComboBox.addItem ("Large", 1);
-    // modelSizeComboBox.addItem ("Medium", 2);
-    // modelSizeComboBox.addItem ("Small", 3);
-    modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
-    contentComponent.addAndMakeVisible (modelSizeComboBox);
     
     // Configure toggle button for sound recommendations
     toggleSoundResultsButton.onClick = [this] { handleToggleSoundResults(); };
@@ -201,7 +191,7 @@ void PtV2AEditor::handleRenderButtonClicked()
     {
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
-            "Error: API Credentials Not Correct",
+            "Error: No API Connection",
             "Please save the correct API credentials under API Settings before rendering audio.\n\n"
             "Click 'API Settings' at the bottom right to configure your credentials.",
             "OK"
@@ -449,16 +439,11 @@ void PtV2AEditor::resized()
     // 20px spacing before model selection
     r.removeFromTop (20);
     
-    // Model selection row: Label + Provider ComboBox + Label + Size ComboBox
+    // Model selection row: Label + Model ComboBox (with integrated sizes)
     auto modelRow = r.removeFromTop (28);
     modelLabel.setBounds (modelRow.removeFromLeft (65));
     modelRow.removeFromLeft (10);
-    modelProviderComboBox.setBounds (modelRow.removeFromLeft (200));
-    modelRow.removeFromLeft (20);
-    modelSizeLabel.setBounds (modelRow.removeFromLeft (40));
-    modelRow.removeFromLeft (10);
-    modelSizeComboBox.setBounds (modelRow.removeFromLeft (180));
-    modelRow.removeFromLeft (20);
+    modelProviderComboBox.setBounds (modelRow.removeFromLeft (230));
     // highPrecisionModeToggle.setBounds (modelRow); // (deprecated TODO remove in future)
 
 
@@ -800,6 +785,7 @@ void PtV2AEditor::timerCallback()
             }
             
             juce::String videoPath;
+            float durationSeconds = 0.0f;
             if (jsonOutput.isNotEmpty())
             {
                 auto json = juce::JSON::parse (jsonOutput);
@@ -810,6 +796,10 @@ void PtV2AEditor::timerCallback()
                     {
                         videoPath = obj->getProperty ("video_path").toString();
                         juce::Logger::writeToLog ("Video path from PTSL: " + videoPath);
+                        
+                        // Get selection duration
+                        durationSeconds = obj->getProperty ("duration_seconds");
+                        juce::Logger::writeToLog ("Selection duration: " + juce::String (durationSeconds, 2) + "s");
                         
                         // Store timeline position for sound import (same as V2A/T2A)
                         juce::String inTime = obj->getProperty ("in_time").toString();
@@ -843,6 +833,52 @@ void PtV2AEditor::timerCallback()
                         }
                     }
                 }
+            }
+            
+            // Validate video duration if video is available (4-12 seconds for optimal X-CLIP processing)
+            if (videoPath.isNotEmpty() && durationSeconds > 0.0f)
+            {
+                if (durationSeconds < 4.0f)
+                {
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Selection Too Short",
+                        juce::String::formatted (
+                            "Timeline selection is only %.2f seconds.\n\n"
+                            "Sound Search requires video clips between 4-12 seconds.\n\n"
+                            "Please select a longer video clip.",
+                            durationSeconds
+                        ),
+                        "OK"
+                    );
+                    
+                    actionButton.setEnabled (true);
+                    actionButton.setButtonText ("Recommend Sounds");
+                    return;
+                }
+                
+                if (durationSeconds > 12.0f)
+                {
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Selection Too Long",
+                        juce::String::formatted (
+                            "Timeline selection is %.2f seconds.\n\n"
+                            "Sound Search requires video clips between 4-12 seconds.\n\n"
+                            "Please:\n"
+                            "1. Select a shorter video clip\n"
+                            "2. Cut your current clip into segments of 4-12 seconds each",
+                            durationSeconds
+                        ),
+                        "OK"
+                    );
+                    
+                    actionButton.setEnabled (true);
+                    actionButton.setButtonText ("Recommend Sounds");
+                    return;
+                }
+                
+                juce::Logger::writeToLog ("Video duration valid for sound search: " + juce::String (durationSeconds, 2) + "s");
             }
             
             // Validate: need at least video OR text
@@ -1014,7 +1050,7 @@ void PtV2AEditor::timerCallback()
         case AsyncState::SearchingSounds:
         {
             // Poll for sound search output file (fire-and-forget process, no ChildProcess to manage)
-            // Check for timeout (80 seconds for video preprocessing + X-CLIP + downloads)
+            // Check for timeout (120 seconds for video preprocessing + X-CLIP + downloads)
             if (elapsed.inMilliseconds() > 120000)
             {
                 juce::Logger::writeToLog ("ERROR: Sound search timed out after 120s");
@@ -1344,7 +1380,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 "Selection Too Short",
                 juce::String::formatted (
                     "Timeline selection is only %.2f seconds.\n\n"
-                    "MMAudio requires clip selections between 4-12 seconds.\n\n"
+                    "V2A requires clip selections between 4-12 seconds.\n\n"
                     "Please select a longer video clip\n",
                     durationSeconds
                 ),
@@ -1363,7 +1399,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
                 "Selection Too Long",
                 juce::String::formatted (
                     "Timeline selection is %.2f seconds.\n\n"
-                    "MMAudio requires clip selections between 4-12 seconds.\n\n"
+                    "V2A requires clip selections between 4-12 seconds.\n\n"
                     "Please:\n"
                     "1. Select a shorter video clip\n"
                     "2. Cut your current clip into segments of 4-12 seconds each",
@@ -1588,13 +1624,21 @@ void PtV2AEditor::startAudioGeneration (const juce::String& videoPath, const juc
     
     // bool useHighPrecision = highPrecisionModeToggle.getToggleState(); // (deprecated TODO remove in future)
     
-    // Read model selection from UI
-    int providerSelectedId = modelProviderComboBox.getSelectedId();
-    PtV2AProcessor::ModelProvider modelProvider = (providerSelectedId == 2) 
-        ? PtV2AProcessor::ModelProvider::HunyuanVideoFoley 
-        : PtV2AProcessor::ModelProvider::MMAudio;
+    // Read model selection from UI (1=MMAudio, 2=HunyuanVideo-Foley XL, 3=HunyuanVideo-Foley XXL)
+    int selectedId = modelProviderComboBox.getSelectedId();
+    PtV2AProcessor::ModelProvider modelProvider;
+    juce::String modelSize;
     
-    juce::String modelSize = modelSizeComboBox.getText();
+    if (selectedId == 1) {
+        modelProvider = PtV2AProcessor::ModelProvider::MMAudio;
+        modelSize = "Large";
+    } else if (selectedId == 2) {
+        modelProvider = PtV2AProcessor::ModelProvider::HunyuanVideoFoley;
+        modelSize = "XL";
+    } else {
+        modelProvider = PtV2AProcessor::ModelProvider::HunyuanVideoFoley;
+        modelSize = "XXL";
+    }
     
     juce::String providerName = (modelProvider == PtV2AProcessor::ModelProvider::MMAudio) ? "MMAudio" : "HunyuanVideo-Foley";
     juce::Logger::writeToLog ("Model selection: " + providerName + " / " + modelSize);
@@ -1669,9 +1713,9 @@ void PtV2AEditor::startT2AAudioGeneration (const juce::String& promptText, float
     juce::String seedText = seedInput.getText().trim();
     int seed = seedText.isEmpty() ? 42 : seedText.getIntValue();
     
-    // T2A only supports MMAudio
+    // T2A only supports MMAudio with Large model size
     PtV2AProcessor::ModelProvider modelProvider = PtV2AProcessor::ModelProvider::MMAudio;
-    juce::String modelSize = modelSizeComboBox.getText();
+    juce::String modelSize = "Large";
     
     juce::Logger::writeToLog ("Model: MMAudio / " + modelSize);
     juce::Logger::writeToLog ("Advanced params: negative_prompt=\"" + negativePrompt + "\", seed=" + juce::String(seed));
@@ -1961,7 +2005,7 @@ void PtV2AEditor::checkAudioGenerationComplete()
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
             "Generation Timeout",
-            "Audio generation timed out after 3 minutes.\n\n"
+            "Audio generation timed out after 2 minutes.\n\n"
             "This might indicate:\n"
             "- API server is not responding\n"
             "- Network connection issues\n"
@@ -2207,7 +2251,7 @@ void PtV2AEditor::handleGenerationModeChange()
     if (isT2AMode)
     {
         // If HunyuanVideo-Foley is selected, switch to MMAudio
-        if (modelProviderComboBox.getSelectedId() == 2)  // HunyuanVideo-Foley
+        if (modelProviderComboBox.getSelectedId() >= 2)  // HunyuanVideo-Foley (XL or XXL)
         {
             juce::Logger::writeToLog ("T2A mode: Switching from HunyuanVideo-Foley to MMAudio");
             modelProviderComboBox.setSelectedId (1, juce::sendNotification);  // Switch to MMAudio
@@ -2262,7 +2306,7 @@ void PtV2AEditor::updateAPICredentialStatus()
         else
         {
             // Invalid credentials - show warning
-            apiWarningLabel.setText (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 API credentials invalid"), juce::dontSendNotification);  // ⚠
+            apiWarningLabel.setText (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 No API Connection"), juce::dontSendNotification);  // ⚠
             apiWarningLabel.setVisible (true);
             juce::Logger::writeToLog ("=== API Credential Status: Invalid ===");
             juce::Logger::writeToLog ("Error: " + error);
@@ -2316,42 +2360,7 @@ void PtV2AEditor::handleWorkflowModeChange()
     modelProviderComboBox.setEnabled (isAudioGen && !isT2AMode);  // Locked to MMAudio in T2A
     modelLabel.setEnabled (isAudioGen);
     
-    modelSizeComboBox.setEnabled (isAudioGen);
-    modelSizeLabel.setEnabled (isAudioGen);
-    
     repaint();
-}
-
-//==============================================================================
-// Model Selection Handler
-//==============================================================================
-void PtV2AEditor::handleModelProviderChange()
-{
-    // Get selected provider (1=MMAudio, 2=HunyuanVideo-Foley)
-    int selectedId = modelProviderComboBox.getSelectedId();
-    
-    // Clear current model size options
-    modelSizeComboBox.clear();
-    
-    if (selectedId == 1)  // MMAudio
-    {
-        // MMAudio model sizes
-        modelSizeComboBox.addItem ("Large", 1);
-        // modelSizeComboBox.addItem ("Medium", 2);
-        // modelSizeComboBox.addItem ("Small", 3);
-        modelSizeComboBox.setSelectedId (1, juce::dontSendNotification);  // Default: Large
-        
-        juce::Logger::writeToLog ("Model provider changed to: MMAudio");
-    }
-    else if (selectedId == 2)  // HunyuanVideo-Foley
-    {
-        // HunyuanVideo-Foley model sizes
-        modelSizeComboBox.addItem ("XXL", 1);
-        modelSizeComboBox.addItem ("XL", 2);
-        modelSizeComboBox.setSelectedId (2, juce::dontSendNotification);  // Default: XL
-        
-        juce::Logger::writeToLog ("Model provider changed to: HunyuanVideo-Foley");
-    }
 }
 
 //==============================================================================
@@ -2958,7 +2967,7 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
     {
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
-            "Error: API Credentials Not Correct",
+            "Error: No API connection",
             "Please save the correct API credentials under API Settings before searching sounds.\n\n"
             "Click 'API Settings' at the bottom right to configure your credentials.",
             "OK"

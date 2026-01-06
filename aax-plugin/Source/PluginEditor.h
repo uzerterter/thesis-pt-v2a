@@ -251,17 +251,6 @@ private:
     juce::Label modelLabel { {}, "Model:" };
     juce::ComboBox modelProviderComboBox;
     
-    /**
-     * Model size selection dropdown
-     * Options depend on selected provider:
-     *   - MMAudio: "Large (44.1kHz)", "Medium (44.1kHz)", "Small (16kHz)"
-     *   - HunyuanVideo-Foley: "XL (8-12GB)", "XXL (16-20GB)"
-     * 
-     * Dynamically updated when provider changes
-     */
-    juce::Label modelSizeLabel { {}, "Size:" };
-    juce::ComboBox modelSizeComboBox;
-    
     //==============================================================================
     // Event Handlers
     //==============================================================================
@@ -301,12 +290,6 @@ private:
      * Shows error if log file doesn't exist
      */
     void handleOpenLogButtonClicked();
-    
-    /**
-     * Handle model provider ComboBox change
-     * Updates model size ComboBox options based on selected provider
-     */
-    void handleModelProviderChange();
     
     /**
      * Handle generation mode change (V2A <-> T2A)

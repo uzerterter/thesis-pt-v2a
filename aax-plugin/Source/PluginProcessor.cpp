@@ -610,38 +610,23 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
         juce::Logger::writeToLog ("WARNING: Auto-detect clip boundaries in background (may cause deadlock from plugin!)");
     }
     
-    // Output settings - use Python's actual temp directory for cross-platform compatibility
-    // Get Python's tempfile.gettempdir() by calling: python -c "import tempfile; print(tempfile.gettempdir())"
-    juce::ChildProcess tempDirProcess;
-    juce::StringArray tempDirCmd;
-    tempDirCmd.add (pythonExe);
-    tempDirCmd.add ("-c");
-    tempDirCmd.add ("import tempfile; print(tempfile.gettempdir())");
-    
-    juce::String pythonTempDir;
-    if (tempDirProcess.start (tempDirCmd))
-    {
-        auto pythonTempOutput = tempDirProcess.readAllProcessOutput().trim();
-        if (pythonTempOutput.isNotEmpty())
-            pythonTempDir = pythonTempOutput;
-    }
-    
-    // Fallback to JUCE temp dir if Python call failed
-    if (pythonTempDir.isEmpty())
-        pythonTempDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getFullPathName();
-    
-    auto outputsDir = juce::File(pythonTempDir).getChildFile ("pt_v2a_outputs");
+    // Generate output directory path (filename will be generated server-side with prompt snippet)
+    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    auto outputsDir = tempDir.getChildFile ("pt_v2a_outputs");
     outputsDir.createDirectory();
     
-    // Generate unique filename: UUID for guaranteed uniqueness across platforms
-    auto sessionId = juce::Uuid().toDashedString().substring(0, 8);
-    auto outputFile = outputsDir.getChildFile ("v2a_" + sessionId + "_" + juce::String (seed) + ".wav");
+    // NOTE: We no longer generate a specific filename here
+    // The server will generate a descriptive name: {prompt_snippet}_{seed}_{model}_{timestamp}.wav
+    // Python client will save using the server-provided filename
+    // We just specify the output directory via --temp flag (client will use temp dir)
+    
+    // Don't pass --output (client will auto-generate path in temp dir with server name)
+    // The client will print the actual output path to stdout, which we'll read
     
     commandArray.add ("--output-format");
     commandArray.add ("wav");  // Pro Tools compatible
     
-    commandArray.add ("--output");
-    commandArray.add (outputFile.getFullPathName());
+    commandArray.add ("--temp");  // Use temp directory (pt_v2a_outputs)
     
     // Add full precision flag if enabled
     if (fullPrecision)
@@ -658,8 +643,9 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // NOTE: Removed --quiet for debugging - we want to see Python output!
     // commandArray.add ("--quiet");  // Minimal output for parsing
     
-    juce::Logger::writeToLog ("Starting V2A audio generation (background process)...");
-    juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
+    juce::Logger::writeToLog ("Starting audio generation (background process)...");
+    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
+    juce::Logger::writeToLog ("Server will generate filename with prompt snippet");
     juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
     
     // Execute subprocess in BACKGROUND (non-blocking)
@@ -689,11 +675,17 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // The OS will clean up the process when it finishes
     // Memory leak is acceptable here (one-time allocation per generation)
     
+    // NOTE: Server generates filename with prompt snippet, so we can't predict the exact name
+    // Instead, we return the output directory path
+    // The Editor will poll for the NEWEST .wav file in this directory
+    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
+    juce::Logger::writeToLog ("Editor will poll for newest WAV file in directory...");
+    
     if (errorMessage != nullptr)
         *errorMessage = "";  // Clear any previous error
     
-    // Return exact output file path (not directory)
-    return outputFile.getFullPathName();
+    // Return the output directory path (Editor will find the newest file there)
+    return outputsDir.getFullPathName();
 }
 
 //==============================================================================
@@ -787,43 +779,20 @@ juce::String PtV2AProcessor::generateAudioTextOnly (
     commandArray.add (modelArg);
     juce::Logger::writeToLog ("MMAudio model: " + modelArg);
     
-    // Output settings - use Python's actual temp directory for cross-platform compatibility
-    // Get Python's tempfile.gettempdir() by calling: python -c "import tempfile; print(tempfile.gettempdir())"
-    juce::ChildProcess tempDirProcess;
-    juce::StringArray tempDirCmd;
-    tempDirCmd.add (pythonExe);
-    tempDirCmd.add ("-c");
-    tempDirCmd.add ("import tempfile; print(tempfile.gettempdir())");
-    
-    juce::String pythonTempDir;
-    if (tempDirProcess.start (tempDirCmd))
-    {
-        auto pythonTempOutput = tempDirProcess.readAllProcessOutput().trim();
-        if (pythonTempOutput.isNotEmpty())
-            pythonTempDir = pythonTempOutput;
-    }
-    
-    // Fallback to JUCE temp dir if Python call failed
-    if (pythonTempDir.isEmpty())
-        pythonTempDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getFullPathName();
-    
-    auto outputsDir = juce::File(pythonTempDir).getChildFile ("pt_v2a_outputs");
+    // Output settings
+    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    auto outputsDir = tempDir.getChildFile ("pt_v2a_outputs");
     outputsDir.createDirectory();
-    
-    // Generate unique filename: UUID for guaranteed uniqueness across platforms
-    auto sessionId = juce::Uuid().toDashedString().substring(0, 8);
-    auto outputFile = outputsDir.getChildFile ("t2a_" + sessionId + "_" + juce::String (seed) + ".wav");
     
     commandArray.add ("--output-format");
     commandArray.add ("wav");
     
-    commandArray.add ("--output");
-    commandArray.add (outputFile.getFullPathName());
+    commandArray.add ("--temp");  // Use temp directory
     
     commandArray.add ("--verbose");  // Enable verbose output for debugging
     
     juce::Logger::writeToLog ("Starting T2A audio generation (background process)...");
-    juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
+    juce::Logger::writeToLog ("Output directory: " + outputsDir.getFullPathName());
     juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
     
     // Start background process
@@ -847,8 +816,8 @@ juce::String PtV2AProcessor::generateAudioTextOnly (
     if (errorMessage != nullptr)
         *errorMessage = "";
     
-    // Return exact output file path (not directory)
-    return outputFile.getFullPathName();
+    // Return output directory path
+    return outputsDir.getFullPathName();
 }
 
 //==============================================================================

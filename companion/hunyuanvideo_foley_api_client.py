@@ -79,6 +79,8 @@ from cli.actions import (
     action_get_video_info,
 )
 
+from cli.error_handler import safe_action_wrapper
+
 # HunyuanVideo-Foley specific imports
 from api.hunyuanvideo_foley_client import (
     check_api_health,
@@ -414,45 +416,35 @@ def main():
     
     if args.action == 'check_ffmpeg':
         """Check FFmpeg availability"""
-        result = action_check_ffmpeg(log_debug_func=log_debug)
-        print(json.dumps(result))
-        return 0 if result['available'] else 1
+        return safe_action_wrapper(lambda: action_check_ffmpeg(log_debug_func=log_debug))
     
     elif args.action == 'get_video_info':
         """Get timeline selection AND video file in one PTSL call"""
-        result = action_get_video_info(log_debug_func=log_debug)
-        print(json.dumps(result))
-        return 0 if result['success'] else 1
+        return safe_action_wrapper(lambda: action_get_video_info(log_debug_func=log_debug))
     
     # =============================================================================
     # Standard Generation Mode (action == 'generate')
     # =============================================================================
     
-    is_cli_mode = args.video is not None
-    
-    if not quiet:
-        print("🌐 HunyuanVideo-Foley Standalone API Client")
-        print("=" * 50)
-        if is_cli_mode:
-            print("📋 CLI Mode (Pro Tools Ready)")
-        else:
-            print("🎮 Interactive Mode")
-        print()
-    
-    try:
+    def run_generation():
+        """Main generation logic wrapped for consistent error handling"""
+        is_cli_mode = args.video is not None
+        
+        if not quiet:
+            print("🌐 HunyuanVideo-Foley Standalone API Client")
+            print("=" * 50)
+            if is_cli_mode:
+                print("📋 CLI Mode (Pro Tools Ready)")
+            else:
+                print("🎮 Interactive Mode")
+            print()
+        
         # === CLI MODE ===
         if is_cli_mode:
             log_debug("=== DEBUG HYVF: CLI mode detected ===")
             # Validate video file
-            try:
-                video_path = str(validate_video_file(args.video))
-                log_debug(f"=== DEBUG HYVF: Video validated: {Path(video_path).name} ===")
-                
-            except (FileNotFoundError, ValueError) as e:
-                log_debug(f"=== DEBUG HYVF: Video validation failed: {e} ===")
-                if not quiet:
-                    print(f"❌ {e}")
-                return 1
+            video_path = str(validate_video_file(args.video))
+            log_debug(f"=== DEBUG HYVF: Video validated: {Path(video_path).name} ===")
             
             # Use CLI parameters
             prompt = args.prompt
@@ -682,22 +674,15 @@ def main():
                     return 1
             
             log_debug("=== DEBUG HYVF: Script exiting with success ===")
-            return 0
+            return {'success': True}
         else:
             log_debug("=== DEBUG HYVF: Audio generation FAILED ===")
             if not quiet:
                 print("\n❌ Audio generation failed")
-            return 1
-            
-    except KeyboardInterrupt:
-        if not quiet:
-            print("\n\n⚠️  Operation cancelled by user")
-        return 1
-    except Exception as e:
-        error_msg = f"ERROR: {e}"
-        print(error_msg)
-        print(error_msg, file=sys.stderr)
-        return 1
+            return {'success': False, 'error': 'Audio generation failed'}
+    
+    # Wrap generation logic with error handler
+    return safe_action_wrapper(run_generation)
 
 
 if __name__ == "__main__":

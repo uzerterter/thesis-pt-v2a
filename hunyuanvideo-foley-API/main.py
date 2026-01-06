@@ -717,6 +717,17 @@ async def root():
         "version": "1.0.0"
     }
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for API availability verification"""
+    return {
+        "status": "ok",
+        "service": "HunyuanVideo-Foley API",
+        "device": str(device),
+        "model_loaded": model_loaded,
+        "version": "1.0.0"
+    }
+
 @app.get("/models")
 async def list_models():
     """List available models"""
