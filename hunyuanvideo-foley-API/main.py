@@ -724,7 +724,6 @@ async def health_check():
         "status": "ok",
         "service": "HunyuanVideo-Foley API",
         "device": str(device),
-        "model_loaded": model_loaded,
         "version": "1.0.0"
     }
 

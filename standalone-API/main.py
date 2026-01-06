@@ -739,7 +739,6 @@ async def health_check():
         "status": "ok",
         "service": "MMAudio Standalone API",
         "device": device,
-        "model_loaded": model is not None,
         "version": "1.0.0"
     }
 
