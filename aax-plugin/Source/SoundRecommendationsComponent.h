@@ -24,7 +24,7 @@ struct SoundResult
  * Features:
  *   - Displays current sound name from search results
  *   - Navigation: Previous/Next buttons to browse results
- *   - Preview: Play sound in plugin before importing
+ *   - Download: Fetch sound file to enable import
  *   - Import: Add selected sound to Pro Tools timeline
  * 
  * Layout (Option 3 - Centered, Focus on Actions):
@@ -33,7 +33,7 @@ struct SoundResult
  *   │  ┌───────────────────────────────┐  │        
  *   │  │ footsteps_concrete            │  │                                         
  *   │  └───────────────────────────────┘  │
- *   │ [◀ Prev]   [▶ Preview]   [Next ▶]  │
+ *   │ [◀ Prev]   [⬇ Download]   [Next ▶]  │
  *   │              [↓ Import]             │
  *   └─────────────────────────────────────┘
  */
@@ -98,16 +98,35 @@ public:
     //==============================================================================
     
     /**
-     * Callback triggered when user clicks Preview button
-     * Signature: void onPreview(const SoundResult& sound)
+     * Callback triggered when user clicks Download button
+     * Signature: void onDownload(const SoundResult& sound)
      */
-    std::function<void(const SoundResult&)> onPreview;
+    std::function<void(const SoundResult&)> onDownload;
     
     /**
      * Callback triggered when user clicks Import button
      * Signature: void onImport(const SoundResult& sound)
      */
     std::function<void(const SoundResult&)> onImport;
+    
+    /**
+     * Mark a sound as downloaded (enables import button)
+     * @param soundId The ID of the downloaded sound
+     * @param localPath Path to the downloaded file
+     */
+    void markSoundAsDownloaded(int soundId, const juce::String& localPath);
+    
+    /**
+     * Mark a sound as currently downloading (shows "Downloading..." state)
+     * @param soundId The ID of the sound being downloaded
+     */
+    void markSoundAsDownloading(int soundId);
+    
+    /**
+     * Clear downloading state (on error/timeout, allows retry)
+     * @param soundId The ID of the sound that failed to download
+     */
+    void clearDownloadingState(int soundId);
 
 private:
     //==============================================================================
@@ -119,6 +138,12 @@ private:
     
     /** Current result index (0-based) */
     int currentIndex = 0;
+    
+    /** Track which sounds have been downloaded: sound_id -> local_path */
+    std::map<int, juce::String> downloadedSounds;
+    
+    /** Track which sounds are currently downloading */
+    std::set<int> downloadingSounds;
 
     //==============================================================================
     // GUI Components
@@ -136,8 +161,8 @@ private:
     /** Navigation: Next button */
     juce::TextButton nextButton { juce::CharPointer_UTF8 ("Next \xe2\x96\xb6") };  // Next ▶
     
-    /** Action: Preview button */
-    juce::TextButton previewButton { juce::CharPointer_UTF8 ("\xe2\x96\xb6 Preview") };  // ▶ Preview
+    /** Action: Download button */
+    juce::TextButton downloadButton { juce::CharPointer_UTF8 ("\xe2\xac\x87 Download") };  // ⬇ Download
     
     /** Action: Import button */
     juce::TextButton importButton { juce::CharPointer_UTF8 ("\xe2\x86\x93 Import") };  // ↓ Import
@@ -148,7 +173,7 @@ private:
     
     void handlePrevClicked();
     void handleNextClicked();
-    void handlePreviewClicked();
+    void handleDownloadClicked();
     void handleImportClicked();
     
     /**

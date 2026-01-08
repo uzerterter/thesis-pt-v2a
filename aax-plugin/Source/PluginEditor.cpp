@@ -61,9 +61,9 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     contentComponent.addAndMakeVisible (apiWarningLabel);
     
     // Configure sound recommendations component
-    soundRecommendations.onPreview = [this] (const SoundResult& sound)
+    soundRecommendations.onDownload = [this] (const SoundResult& sound)
     {
-        handleSoundPreview (sound);
+        handleSoundDownload (sound);
     };
     soundRecommendations.onImport = [this] (const SoundResult& sound)
     {
@@ -462,23 +462,13 @@ void PtV2AEditor::resized()
     // 60px spacing before buttons section
     r.removeFromTop (60);
 
-    // Unified action button row: centered
+    // Main action button - centered
     auto buttonRow = r.removeFromTop (28);
+    const int actionW = 160;
+    buttonRow.removeFromLeft ((buttonRow.getWidth() - actionW) / 2);  // Center
+    actionButton.setBounds (buttonRow.removeFromLeft (actionW));
 
-    const int actionW   = 160;
-    const int openLogW  = 120;
-    const int gap       = 20;
-
-    const int totalWidth = actionW + gap + openLogW;
-    int startX = buttonRow.getX() + juce::jmax (0, (buttonRow.getWidth() - totalWidth) / 2);
-    int y = buttonRow.getY();
-    int h = buttonRow.getHeight();
-
-    actionButton.setBounds (startX, y, actionW, h);
-    startX += actionW + gap;
-    openLogButton.setBounds (startX, y, openLogW, h);
-
-    // Toggle button for sound recommendations - placed below render button
+    // Toggle button for sound recommendations - centered below render button
     r.removeFromTop (15);  // Spacing
     auto toggleButtonRow = r.removeFromTop (28);
     toggleButtonRow.removeFromLeft ((toggleButtonRow.getWidth() - 200) / 2);  // Center
@@ -489,17 +479,21 @@ void PtV2AEditor::resized()
     auto soundRecommendationsArea = r.removeFromTop (140);  // Fixed height for component
     soundRecommendations.setBounds (soundRecommendationsArea);
 
-    // Settings row at bottom: [Warning Label] [API Settings Button]
+    // Settings row at bottom: [Open Log] ... [Warning Label] [API Settings Button]
     auto settingsRow = r.removeFromBottom (28);
     r.removeFromBottom (10);  // Spacing
     
-    // Calculate positions for warning label and settings button
+    // Left side button
+    const int openLogW = 90;
+    openLogButton.setBounds (settingsRow.removeFromLeft (openLogW));
+    
+    // Calculate positions for warning label and settings button (right-aligned)
     const int warningWidth = 160;
     const int settingsWidth = 180;
     const int settingsGap = 10;
     const int totalSettingsWidth = warningWidth + settingsGap + settingsWidth;
     
-    settingsRow.removeFromLeft (contentComponent.getWidth() - totalSettingsWidth - 24);  // Align right (accounting for margins)
+    settingsRow.removeFromLeft (contentComponent.getWidth() - openLogW - totalSettingsWidth - 24);  // Space between left and right
     apiWarningLabel.setBounds (settingsRow.removeFromLeft (warningWidth));
     settingsRow.removeFromLeft (settingsGap);
     settingsButton.setBounds (settingsRow.removeFromLeft (settingsWidth));
@@ -1109,6 +1103,98 @@ void PtV2AEditor::timerCallback()
             // Re-enable button AFTER results are parsed
             actionButton.setEnabled (true);
             actionButton.setButtonText ("Recommend Sounds");
+            
+            // Cleanup output file
+            outputFile.deleteFile();
+            break;
+        }
+        
+        case AsyncState::DownloadingSingleSound:
+        {
+            // Poll for sound download output file
+            // Check for timeout (30 seconds for single sound download)
+            if (elapsed.inMilliseconds() > 30000)
+            {
+                juce::Logger::writeToLog ("ERROR: Sound download timed out after 30s");
+                
+                stopTimer();
+                currentAsyncState = AsyncState::Idle;
+                
+                // Clear downloading state so user can retry
+                soundRecommendations.clearDownloadingState (currentDownloadingSound.id);
+                
+                // Cleanup output file if exists
+                juce::File outputFile (expectedSoundDownloadOutputPath);
+                if (outputFile.existsAsFile())
+                    outputFile.deleteFile();
+                
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Download Timeout",
+                    "Sound download timed out after 30 seconds.\n\n"
+                    "Please check your network connection and try again.",
+                    "OK"
+                );
+                
+                return;
+            }
+            
+            // Check if output file exists (non-blocking file check)
+            juce::File outputFile (expectedSoundDownloadOutputPath);
+            
+            if (!outputFile.existsAsFile())
+            {
+                // Still downloading, log progress every 2 seconds
+                if ((elapsed.inMilliseconds() / 1000) % 2 == 0 && (elapsed.inMilliseconds() % 1000) < TIMER_INTERVAL_MS)
+                {
+                    juce::Logger::writeToLog ("Downloading sound... (" + 
+                                              juce::String (elapsed.inSeconds(), 1) + "s elapsed)");
+                }
+                return;  // Keep polling
+            }
+            
+            // Output file found! Read results
+            juce::Logger::writeToLog ("Sound download completed after " + 
+                                      juce::String (elapsed.inSeconds(), 1) + "s");
+            juce::Logger::writeToLog ("Output file: " + outputFile.getFullPathName());
+            
+            auto jsonText = outputFile.loadFileAsString();
+            
+            stopTimer();
+            currentAsyncState = AsyncState::Idle;
+            
+            // Parse JSON response
+            auto jsonResult = juce::JSON::parse (jsonText);
+            if (auto* jsonObject = jsonResult.getDynamicObject())
+            {
+                juce::String status = jsonObject->getProperty ("status").toString();
+                
+                if (status == "success")
+                {
+                    juce::String localPath = jsonObject->getProperty ("local_path").toString();
+                    int soundId = currentDownloadingSound.id;
+                    
+                    juce::Logger::writeToLog ("✓ Sound downloaded successfully: ID=" + juce::String(soundId) + ", path=" + localPath);
+                    
+                    // Mark sound as downloaded in UI component
+                    soundRecommendations.markSoundAsDownloaded (soundId, localPath);
+                }
+                else
+                {
+                    juce::String message = jsonObject->getProperty ("message").toString();
+                    juce::Logger::writeToLog ("ERROR: Sound download failed: " + message);
+                    
+                    // Clear downloading state so user can retry
+                    soundRecommendations.clearDownloadingState (currentDownloadingSound.id);
+                    
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Download Failed",
+                        "Failed to download sound:\n\n" + message,
+                        "OK"
+                    );
+                }
+            }
             
             // Cleanup output file
             outputFile.deleteFile();
@@ -2476,42 +2562,84 @@ void PtV2AEditor::showCredentialDialog()
 // Sound Search Event Handlers
 //==============================================================================
 
-void PtV2AEditor::handleSoundPreview (const SoundResult& sound)
+void PtV2AEditor::handleSoundDownload (const SoundResult& sound)
 {
-    juce::Logger::writeToLog ("=== Sound Preview Clicked ===");
+    juce::Logger::writeToLog ("=== Sound Download Clicked ===");
     juce::Logger::writeToLog ("Sound ID: " + juce::String (sound.id));
     juce::Logger::writeToLog ("Description: " + sound.description);
-    juce::Logger::writeToLog ("Local Path: " + sound.localPath);
     
-    // TASK 7: Implement audio preview playback
-    if (processor.isSoundPreviewPlaying())
+    // Store current sound for download process
+    currentDownloadingSound = sound;
+    
+    // Get Python executable and sound_search_api_client.py (sibling to standalone_api_client.py)
+    auto pythonExe = processor.getPythonExecutable();
+    auto scriptFile = processor.getAPIClientScript();
+    auto soundSearchClientScript = scriptFile.getParentDirectory().getChildFile ("sound_search_api_client.py");
+    
+    if (!soundSearchClientScript.existsAsFile())
     {
-        // Stop if already playing (toggle behavior)
-        processor.stopSoundPreview();
-        juce::Logger::writeToLog ("Preview stopped (toggle)");
+        juce::Logger::writeToLog ("ERROR: sound_search_api_client.py not found at: " + soundSearchClientScript.getFullPathName());
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Script Error",
+            "Sound search client script not found.\n\n"
+            "Please check plugin installation.",
+            "OK"
+        );
+        return;
     }
-    else
+    
+    // Generate session ID for output file
+    auto sessionId = juce::Uuid().toString().replaceCharacter ('-', '_');
+    expectedSoundDownloadOutputPath = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                           .getChildFile ("sound_download_" + sessionId + ".json")
+                                           .getFullPathName();
+    
+    // Build command: python sound_search_api_client.py --action download --sound-id <id> --session-id <id> --output-json <path>
+    juce::StringArray commandArray;
+    commandArray.add (pythonExe);
+    commandArray.add ("-X");
+    commandArray.add ("utf8");
+    commandArray.add (soundSearchClientScript.getFullPathName());
+    commandArray.add ("--action");
+    commandArray.add ("download");
+    commandArray.add ("--sound-id");
+    commandArray.add (juce::String (sound.id));
+    commandArray.add ("--session-id");
+    commandArray.add (sessionId);
+    commandArray.add ("--output-json");
+    commandArray.add (expectedSoundDownloadOutputPath);
+    commandArray.add ("--quiet");
+    
+    juce::Logger::writeToLog ("Starting sound download process...");
+    juce::Logger::writeToLog ("Command: " + commandArray.joinIntoString (" "));
+    
+    // Start process
+    soundDownloadProcess = std::make_unique<juce::ChildProcess>();
+    
+    if (!soundDownloadProcess->start (commandArray))
     {
-        // Start preview
-        bool success = processor.startSoundPreview (sound.localPath);
-        
-        if (!success)
-        {
-            juce::AlertWindow::showMessageBoxAsync (
-                juce::MessageBoxIconType::WarningIcon,
-                "Preview Failed",
-                "Could not play audio preview.\n\n"
-                "File: " + sound.filename + "\n"
-                "Path: " + sound.localPath + "\n\n"
-                "Check the log file for details.",
-                "OK"
-            );
-        }
-        else
-        {
-            juce::Logger::writeToLog ("✓ Preview started successfully");
-        }
+        juce::Logger::writeToLog ("ERROR: Failed to start sound download process");
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Process Error",
+            "Failed to start sound download process.\n\n"
+            "Please check plugin installation.",
+            "OK"
+        );
+        soundDownloadProcess.reset();
+        return;
     }
+    
+    juce::Logger::writeToLog ("✓ Sound download process started");
+    
+    // Mark sound as downloading in UI
+    soundRecommendations.markSoundAsDownloading (sound.id);
+    
+    // Start async polling
+    currentAsyncState = AsyncState::DownloadingSingleSound;
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    startTimer (TIMER_INTERVAL_MS);
 }
 
 void PtV2AEditor::handleSoundImport (const SoundResult& sound)
@@ -2733,7 +2861,7 @@ void PtV2AEditor::triggerSoundSearch (const juce::String& videoPath, const juce:
     // Store output file path for polling
     expectedSoundSearchOutputPath = outputFile.getFullPathName();
     
-    // Build command: python sound_search_api_client.py --action search --limit 3 --session-id <id> [--video path] [--text prompt]
+    // Build command: python sound_search_api_client.py --action search --limit 10 --session-id <id> [--video path] [--text prompt]
     juce::StringArray args;
     args.add (pythonExe);
     args.add ("-X");
@@ -2742,7 +2870,7 @@ void PtV2AEditor::triggerSoundSearch (const juce::String& videoPath, const juce:
     args.add ("--action");
     args.add ("search");
     args.add ("--limit");
-    args.add ("3");  // Reduced from 5 to 3 for improved speed
+    args.add ("10");  // TODO: how many?
     args.add ("--quiet");  // Suppress progress messages
     args.add ("--session-id");
     args.add (sessionId);

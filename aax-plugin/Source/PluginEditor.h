@@ -324,11 +324,11 @@ private:
     void handleT2ARenderButtonClicked();
     
     /**
-     * Handle sound preview button click
-     * Loads and plays the selected sound in the plugin
-     * @param sound The sound to preview
+     * Handle sound download button click
+     * Downloads the selected sound file from the API
+     * @param sound The sound to download
      */
-    void handleSoundPreview (const SoundResult& sound);
+    void handleSoundDownload (const SoundResult& sound);
     
     /**
      * Handle sound import button click
@@ -488,6 +488,7 @@ private:
         ReadingClipBounds,              // Reading clip boundaries via PTSL (for auto-trim detection)
         GeneratingAudio,                // Python generating audio (polling for output file)
         SearchingSounds,                // Python searching sounds (polling for JSON output)
+        DownloadingSingleSound,         // Python downloading single sound (polling for JSON output)
         ImportingAudio,                 // Importing generated audio to Pro Tools via PTSL
         ImportingSoundFX                // Importing sound library audio to Pro Tools via PTSL
     };
@@ -509,6 +510,9 @@ private:
     /** Sound search process handle (kept alive during search, no stdout reading) */
     std::unique_ptr<juce::ChildProcess> soundSearchProcess;
     
+    /** Sound download process handle (for downloading single sound) */
+    std::unique_ptr<juce::ChildProcess> soundDownloadProcess;
+    
     /** Sound import process handle (for importing BBC sounds to timeline) */
     std::unique_ptr<juce::ChildProcess> soundImportProcess;
     
@@ -523,6 +527,12 @@ private:
     
     /** Expected sound search output JSON file path (for file polling) */
     juce::String expectedSoundSearchOutputPath;
+    
+    /** Expected sound download output JSON file path (for file polling) */
+    juce::String expectedSoundDownloadOutputPath;
+    
+    /** Current sound being downloaded (stored for download process) */
+    SoundResult currentDownloadingSound;
     
     /** Video path and prompt (stored for generation process) */
     juce::String currentVideoPath;

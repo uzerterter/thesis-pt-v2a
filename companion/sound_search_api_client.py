@@ -106,25 +106,24 @@ def action_search(args):
         # Hybrid search: use configured weight
         log_debug(f"Hybrid search (video + text) - using text_weight={effective_text_weight}")
     
-    # Perform search and download
+    # Perform search only (no download)
     log_debug(f"Starting search with text_weight={effective_text_weight}, num_frames={args.num_frames}")
     
-    log_debug("Calling search_and_download()...")
+    log_debug("Calling search_sounds() (search only, no download)...")
     log_debug(f"  video_path: {args.video}")
     log_debug(f"  text_query: {args.text}")
     log_debug(f"  limit: {args.limit}")
     
-    results = search_and_download(
+    results = search_sounds(
         video_path=args.video,
         text_query=args.text,
         limit=args.limit,
         text_weight=effective_text_weight,
         num_frames=args.num_frames,
-        session_id=args.session_id,
         quiet=args.quiet,  # Use CLI argument (True when called from plugin)
         verbose=args.verbose,  # Use CLI argument (False when called from plugin)
     )
-    log_debug(f"search_and_download() returned: {type(results)} with {len(results) if results else 0} items")
+    log_debug(f"search_sounds() returned: {type(results)} with {len(results) if results else 0} items")
     
     if not results:
         log_debug("ERROR: Search failed or no results found (results is None or empty)")
@@ -151,8 +150,7 @@ def action_search(args):
             "description": sound["description"],
             "category": sound["category"],
             "similarity": sound["similarity"],
-            "local_path": sound["local_path"],
-            "filename": Path(sound["local_path"]).name
+            "file_path": sound.get("file_path", ""),  # Include but may not be needed yet
         })
     
     log_debug(f"Formatting output with {len(output['results'])} results")
@@ -217,12 +215,29 @@ def action_download(args):
         }
     
     log_debug(f"Download successful: {local_path}")
-    return {
+    
+    # Prepare output
+    output = {
         "status": "success",
         "sound_id": args.sound_id,
         "local_path": local_path,
         "filename": Path(local_path).name
     }
+    
+    # Write to output file if specified (for plugin integration)
+    if args.output_json:
+        log_debug(f"Writing download result to file: {args.output_json}")
+        json_output = json.dumps(output, indent=2)
+        with open(args.output_json, 'w', encoding='utf-8') as f:
+            f.write(json_output)
+        log_debug(f"✓ Download result written to: {args.output_json}")
+        
+        return {
+            "status": "success",
+            "output_file": args.output_json
+        }
+    
+    return output
 
 
 def action_cleanup(args):

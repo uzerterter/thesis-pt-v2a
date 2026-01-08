@@ -27,8 +27,8 @@ SoundRecommendationsComponent::SoundRecommendationsComponent()
     nextButton.onClick = [this] { handleNextClicked(); };
     addAndMakeVisible (nextButton);
     
-    previewButton.onClick = [this] { handlePreviewClicked(); };
-    addAndMakeVisible (previewButton);
+    downloadButton.onClick = [this] { handleDownloadClicked(); };
+    addAndMakeVisible (downloadButton);
     
     importButton.onClick = [this] { handleImportClicked(); };
     addAndMakeVisible (importButton);
@@ -80,12 +80,12 @@ void SoundRecommendationsComponent::resized()
     buttonRow.removeFromRight (20);
     nextButton.setBounds (buttonRow.removeFromRight (buttonWidth));
     
-    // Center Preview and Import in remaining space
+    // Center Download and Import in remaining space
     const int centerWidth = buttonWidth * 2 + spacing;
     const int centerStartX = (buttonRow.getWidth() - centerWidth) / 2;
     
     buttonRow.removeFromLeft (centerStartX);
-    previewButton.setBounds (buttonRow.removeFromLeft (buttonWidth));
+    downloadButton.setBounds (buttonRow.removeFromLeft (buttonWidth));
     buttonRow.removeFromLeft (spacing);
     importButton.setBounds (buttonRow.removeFromLeft (buttonWidth));
 }
@@ -106,6 +106,7 @@ void SoundRecommendationsComponent::clearResults()
 {
     soundResults.clear();
     currentIndex = 0;
+    downloadedSounds.clear();
     updateDisplay();
     setVisible (false);
 }
@@ -145,9 +146,9 @@ void SoundRecommendationsComponent::handleNextClicked()
     updateDisplay();
 }
 
-void SoundRecommendationsComponent::handlePreviewClicked()
+void SoundRecommendationsComponent::handleDownloadClicked()
 {
-    juce::Logger::writeToLog ("[SoundRec] Preview button clicked");
+    juce::Logger::writeToLog ("[SoundRec] Download button clicked");
     
     auto* sound = getCurrentSound();
     if (!sound)
@@ -158,14 +159,14 @@ void SoundRecommendationsComponent::handlePreviewClicked()
     
     juce::Logger::writeToLog ("[SoundRec] Current sound: ID=" + juce::String (sound->id) + ", " + sound->description);
     
-    if (!onPreview)
+    if (!onDownload)
     {
-        juce::Logger::writeToLog ("[SoundRec] ERROR: onPreview callback is not set!");
+        juce::Logger::writeToLog ("[SoundRec] ERROR: onDownload callback is not set!");
         return;
     }
     
-    juce::Logger::writeToLog ("[SoundRec] Calling onPreview callback...");
-    onPreview (*sound);
+    juce::Logger::writeToLog ("[SoundRec] Calling onDownload callback...");
+    onDownload (*sound);
 }
 
 void SoundRecommendationsComponent::handleImportClicked()
@@ -200,7 +201,7 @@ void SoundRecommendationsComponent::updateDisplay()
         
         prevButton.setEnabled (false);
         nextButton.setEnabled (false);
-        previewButton.setEnabled (false);
+        downloadButton.setEnabled (false);
         importButton.setEnabled (false);
     }
     else
@@ -216,10 +217,74 @@ void SoundRecommendationsComponent::updateDisplay()
         displayText << currentSound.description;
         soundNameLabel.setText (displayText, juce::dontSendNotification);
         
-        // Enable all buttons
+        // Enable navigation buttons
         prevButton.setEnabled (true);
         nextButton.setEnabled (true);
-        previewButton.setEnabled (true);
-        importButton.setEnabled (true);
+        
+        // Check if current sound is downloaded or downloading
+        bool isDownloaded = downloadedSounds.find(currentSound.id) != downloadedSounds.end();
+        bool isDownloading = downloadingSounds.find(currentSound.id) != downloadingSounds.end();
+        
+        // Download button state
+        if (isDownloaded)
+        {
+            downloadButton.setEnabled (false);
+            downloadButton.setButtonText (juce::CharPointer_UTF8 ("\xe2\x9c\x93 Downloaded"));  // ✓ Downloaded
+        }
+        else if (isDownloading)
+        {
+            downloadButton.setEnabled (false);
+            downloadButton.setButtonText (juce::CharPointer_UTF8 ("\xe2\x8f\xb3 Downloading..."));  // ⏳ Downloading...
+        }
+        else
+        {
+            downloadButton.setEnabled (true);
+            downloadButton.setButtonText (juce::CharPointer_UTF8 ("\xe2\xac\x87 Download"));  // ⬇ Download
+        }
+        
+        // Import button: only enabled if downloaded
+        importButton.setEnabled (isDownloaded);
     }
 }
+
+void SoundRecommendationsComponent::markSoundAsDownloaded(int soundId, const juce::String& localPath)
+{
+    juce::Logger::writeToLog ("[SoundRec] Marking sound as downloaded: ID=" + juce::String(soundId) + ", path=" + localPath);
+    
+    downloadedSounds[soundId] = localPath;
+    downloadingSounds.erase(soundId);  // Remove from downloading set
+    
+    // Update the localPath in the current sound result if it matches
+    for (auto& sound : soundResults)
+    {
+        if (sound.id == soundId)
+        {
+            sound.localPath = localPath;
+            break;
+        }
+    }
+    
+    // Update UI to reflect new state
+    updateDisplay();
+}
+
+void SoundRecommendationsComponent::markSoundAsDownloading(int soundId)
+{
+    juce::Logger::writeToLog ("[SoundRec] Marking sound as downloading: ID=" + juce::String(soundId));
+    
+    downloadingSounds.insert(soundId);
+    
+    // Update UI to reflect new state
+    updateDisplay();
+}
+
+void SoundRecommendationsComponent::clearDownloadingState(int soundId)
+{
+    juce::Logger::writeToLog ("[SoundRec] Clearing downloading state: ID=" + juce::String(soundId));
+    
+    downloadingSounds.erase(soundId);
+    
+    // Update UI to reflect new state (button will be re-enabled)
+    updateDisplay();
+}
+
