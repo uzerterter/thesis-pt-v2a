@@ -451,8 +451,23 @@ private:
      * 
      * @param videoPath Path to video file (optional, can be empty for T2A)
      * @param prompt Text prompt used for generation
+     * @param videoOffset Timeline position where video starts (e.g., "00:02")
+     * @param timelineStart Timeline selection start in seconds
+     * @param timelineEnd Timeline selection end in seconds
+     * @param clipStartSeconds Clip start in source video (seconds)
+     * @param clipEndSeconds Clip end in source video (seconds)
+     * @param autoDetectClipBounds If true, use clip bounds; if false, use manual offset
      */
-    void triggerSoundSearch (const juce::String& videoPath, const juce::String& prompt);
+    void triggerSoundSearch (
+        const juce::String& videoPath, 
+        const juce::String& prompt,
+        const juce::String& videoOffset = "",
+        float timelineStart = 0.0f,
+        float timelineEnd = 0.0f,
+        float clipStartSeconds = -1.0f,
+        float clipEndSeconds = -1.0f,
+        bool autoDetectClipBounds = false
+    );
     
     /**
      * Handle sound search completion (called from timer or async callback).

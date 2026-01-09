@@ -848,6 +848,8 @@ def main():
         # Check if video needs downscaling BEFORE workflow processing
         # This handles untrimmed videos (trimmed videos are checked after trimming)
         # Skip for T2A mode (no video)
+        # Note: Downscaling is now ALWAYS done after trimming in trim_and_maybe_downscale_video()
+        # This prevents timeout issues with very large videos
         will_be_trimmed = (
             (args.video_offset and args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
             (args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
@@ -855,28 +857,15 @@ def main():
             (args.video_offset and args.timeline_start != 0.0 and args.timeline_end != 0.0)
         )
         
-        if not is_t2a_mode and not will_be_trimmed:
-            # Video won't be trimmed, check if downscaling needed now (V2A only)
+        # Log video size for debugging
+        if not is_t2a_mode:
             file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
-            log_debug(f"=== DEBUG: Untrimmed video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+            log_debug(f"=== DEBUG: Input video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
             
-            if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
-                log_debug(f"=== DEBUG: File size exceeds threshold, downscaling to 480p... ===")
-                downscale_result = downscale_video(video_path)
-                if downscale_result['success']:
-                    log_debug(f"=== DEBUG: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
-                    log_debug(f"=== DEBUG: FPS preserved: {downscale_result['original_fps']:.1f} fps ===")
-                    video_path = downscale_result['output_path']
-                    if not quiet:
-                        print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
-                else:
-                    log_debug(f"=== DEBUG: Downscaling failed: {downscale_result['error']} ===")
-                    if not quiet:
-                        print(f"⚠️ Downscaling failed, using original video")
+            if will_be_trimmed:
+                log_debug(f"=== DEBUG: Video will be trimmed first, then downscaled if needed ===")
             else:
-                log_debug(f"=== DEBUG: File size OK, no downscaling needed ===")
-        else:
-            log_debug(f"=== DEBUG: Video will be trimmed, downscaling will occur after trimming ===")
+                log_debug(f"=== DEBUG: Video will not be trimmed, may need downscaling ===")
         
         # === Video Trimming (Four workflows supported) ===
         # 1. MANUAL OFFSET + CLIP BOUNDS (trimmed clip + manual offset): Both --video-offset AND --clip-start-seconds provided
@@ -1261,6 +1250,27 @@ def main():
             
             # Replace video_path with trimmed version
             video_path = trimmed_video_path
+        
+        # Final check: If video was NOT trimmed, we may still need to downscale large videos
+        # (For trimmed videos, downscaling already happened after trimming)
+        if not is_t2a_mode and not will_be_trimmed:
+            file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
+            log_debug(f"=== DEBUG: Untrimmed video final size check: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+            
+            if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
+                log_debug(f"=== DEBUG: Untrimmed video exceeds threshold, downscaling to 480p... ===")
+                downscale_result = downscale_video(video_path)
+                if downscale_result['success']:
+                    log_debug(f"=== DEBUG: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
+                    video_path = downscale_result['output_path']
+                    if not quiet:
+                        print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
+                else:
+                    log_debug(f"=== DEBUG: Downscaling failed: {downscale_result['error']} ===")
+                    if not quiet:
+                        print(f"⚠️ Downscaling failed, using original video (may be slow)")
+            else:
+                log_debug(f"=== DEBUG: Untrimmed video size OK, no downscaling needed ===")
         
         # Generate audio
         output_file = generate_audio(

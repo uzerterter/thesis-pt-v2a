@@ -499,36 +499,27 @@ def main():
                 print(f"📦 Available models: {models_info.get('available_models', [])}")
                 print(f"💾 Loaded models: {models_info.get('loaded_models', [])}")
         
-        # === Video Preprocessing (Downscaling) ===
-        # Check if video needs downscaling BEFORE workflow processing
-        # This handles untrimmed videos (trimmed videos are checked after trimming)
-        will_be_trimmed = (
-            (args.clip_start_seconds is not None and args.clip_end_seconds is not None) or
-            (args.video_offset and args.timeline_start != 0.0 and args.timeline_end != 0.0)
-        )
+        # === Video Preprocessing ===
+        # Important: Downscaling is now ALWAYS done after trimming in trim_and_maybe_downscale_video()
+        # or at the end if video was not trimmed. This prevents timeout issues with large videos.
+        # 
+        # Workflow:
+        #   1. Trim video (if needed) - reduces file size significantly (e.g., 419MB → 5MB)
+        #   2. Downscale trimmed result (if > 2MB) - fast operation on small file (5MB → 2MB)
+        #   3. For untrimmed videos, downscale at the end before generate_audio()
+        # 
+        # Note: Downscaling is now ALWAYS done after trimming in trim_and_maybe_downscale_video()
+        # or at the end (see below before generate_audio()). Early downscaling removed to prevent
+        # FFmpeg timeout (30s) when processing large untrimmed videos.
         
-        if not will_be_trimmed:
-            # Video won't be trimmed, check if downscaling needed now
-            file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
-            log_debug(f"=== DEBUG HYVF: Untrimmed video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
-            
-            if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
-                log_debug(f"=== DEBUG HYVF: File size exceeds threshold, downscaling to 480p... ===")
-                downscale_result = downscale_video(video_path)
-                if downscale_result['success']:
-                    log_debug(f"=== DEBUG HYVF: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
-                    log_debug(f"=== DEBUG HYVF: FPS preserved: {downscale_result['original_fps']:.1f} fps ===")
-                    video_path = downscale_result['output_path']
-                    if not quiet:
-                        print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
-                else:
-                    log_debug(f"=== DEBUG HYVF: Downscaling failed: {downscale_result['error']} ===")
-                    if not quiet:
-                        print(f"⚠️ Downscaling failed, using original video")
-            else:
-                log_debug(f"=== DEBUG HYVF: File size OK, no downscaling needed ===")
+        # Log video size for debugging
+        file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
+        log_debug(f"=== DEBUG HYVF: Original video size: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+        
+        if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
+            log_debug(f"=== DEBUG HYVF: Video will be trimmed first, then downscaled if needed ===")
         else:
-            log_debug(f"=== DEBUG HYVF: Video will be trimmed, downscaling will occur after trimming ===")
+            log_debug(f"=== DEBUG HYVF: File size OK, no downscaling needed ===")
         
         # === Video Trimming (if needed) ===
         # Support same workflows as MMAudio client for consistency
@@ -613,6 +604,25 @@ def main():
                         print(f"✅ Video trimmed and downscaled to 480p in {trim_result['encoding_time']:.1f}s")
                     else:
                         print(f"✅ Video trimmed in {trim_result['encoding_time']:.1f}s")
+        
+        # Final check: If video was NOT trimmed, we may still need to downscale large videos
+        # before generate_audio() to prevent timeout issues
+        if not (args.clip_start_seconds or args.video_offset):
+            file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
+            log_debug(f"=== DEBUG HYVF: Untrimmed video final size check: {file_size_mb:.1f} MB (threshold: {VIDEO_DOWNSCALE_THRESHOLD_MB} MB) ===")
+            
+            if file_size_mb > VIDEO_DOWNSCALE_THRESHOLD_MB:
+                log_debug(f"=== DEBUG HYVF: Untrimmed video exceeds threshold, downscaling to 480p... ===")
+                downscale_result = downscale_video(video_path)
+                if downscale_result['success']:
+                    log_debug(f"=== DEBUG HYVF: Downscaled: {downscale_result['original_size_mb']:.1f} MB → {downscale_result['downscaled_size_mb']:.1f} MB ({downscale_result['compression_ratio']:.0f}x smaller, {downscale_result['encoding_time']:.1f}s) ===")
+                    video_path = downscale_result['output_path']
+                    if not quiet:
+                        print(f"⚡ Video downscaled to 480p ({downscale_result['compression_ratio']:.0f}x smaller)")
+                else:
+                    log_debug(f"=== DEBUG HYVF: Downscaling failed: {downscale_result['error']} ===")
+                    if not quiet:
+                        print(f"⚠️ Downscaling failed, using original video")
         
         # Generate audio
         log_debug(f"=== DEBUG HYVF: Starting audio generation ===")

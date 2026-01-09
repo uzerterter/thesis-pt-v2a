@@ -890,8 +890,20 @@ void PtV2AEditor::timerCallback()
             }
             
             // Trigger sound search with video + prompt
+            // Pass clip bounds for video trimming (prevents sending large videos)
+            // Auto-detect always enabled: clipStartSeconds/clipEndSeconds are set by handleClipBoundsResult()
+            // If clip bounds are valid (>= 0), they will be used for trimming
             // Button will be re-enabled after search completes in SearchingSounds state
-            triggerSoundSearch (videoPath, currentPrompt);
+            triggerSoundSearch (
+                videoPath, 
+                currentPrompt,
+                "",                              // Video offset (removed from UI)
+                0.0f,                            // Timeline start (not used for sound search button)
+                0.0f,                            // Timeline end (not used for sound search button)
+                clipStartSeconds,                // Clip start from auto-detection (or -1.0f if not detected)
+                clipEndSeconds,                  // Clip end from auto-detection (or -1.0f if not detected)
+                clipStartSeconds >= 0.0f         // Auto-detect succeeded if clipStartSeconds is valid
+            );
             
             break;
         }
@@ -1535,6 +1547,9 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         //======================================================================
         // Step 3.5: Check if clip is trimmed (compare clip duration vs source duration)
         //======================================================================
+        // COMMENTED OUT: FFprobe check causes timeout on large videos (419MB takes >5s)
+        // Solution: ALWAYS read clip bounds via PTSL (works for trimmed AND untrimmed clips)
+        /*
         // Get source video duration via FFprobe
         float sourceVideoDuration = getSourceVideoDuration (videoPath);
         
@@ -1560,75 +1575,28 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
             juce::Logger::writeToLog ("WARNING: Could not determine source video duration, assuming not trimmed");
             clipIsTrimmed = false;
         }
+        */
         
         //======================================================================
-        // Step 4: Determine trimming workflow
+        // Step 4: ALWAYS read clip bounds (works for trimmed AND untrimmed clips)
         //======================================================================
-        // Check user preferences (deprecated TODO remove in future)
-        // juce::String manualOffset = videoOffsetInput.getText().trim();
-        // bool hasManualOffset = manualOffset.isNotEmpty();
+        // Clip bounds from PTSL work for all cases:
+        // - Trimmed clip: Returns actual source position (e.g. 20-27s)
+        // - Untrimmed clip: Returns full video (e.g. 0-60s)
+        // This is faster and more reliable than FFprobe check
         
-        // Decision logic (priority order):
-        // 1. Manual offset + trimmed clip → Read clip bounds FIRST (needed for calculation), then use manual offset
-        // 2. Manual offset + untrimmed clip → Use manual offset directly (no clip bounds needed)
-        // 3. Auto-detect (trimmed, no manual offset) → Read clip bounds
-        // 4. Full video (untrimmed, no manual offset) → Use entire source
+        juce::Logger::writeToLog ("Reading clip bounds from Pro Tools (works for all clip types)...");
         
-        // if (hasManualOffset && clipIsTrimmed) (deprecated TODO remove in future)
-        //{
-            // SPECIAL CASE: Manual offset on trimmed clip
-            // Need to read clip bounds first for correct calculation in Python
-            // Formula: source_start = clip_source_start + (timeline_pos - clip_timeline_start)
-           // juce::Logger::writeToLog ("Manual offset on TRIMMED clip - reading clip bounds first...");
-            // juce::Logger::writeToLog ("Manual offset value: " + manualOffset);
-            
-            // actionButton.setButtonText ("Reading Clip Bounds...");
-            
-            // Store video and prompt for later use (after clip bounds are read)
-            // currentVideoPath = videoPath;
-            // currentPrompt = prompt.getText();
-            
-            // Start async clip bounds reading
-            // handleClipBoundsResult() will detect manual offset and proceed accordingly
-            // startClipBoundsRead (videoPath);
-            // return;  // Exit here, will continue in handleClipBoundsResult()
-        //}
-        // else if (hasManualOffset) (deprecated TODO remove in future)
-        // {
-            // Manual offset on UNTRIMMED clip - can proceed directly
-           //  juce::Logger::writeToLog ("Using manual offset workflow (untrimmed): " + manualOffset);
-            
-            // CRITICAL: Reset clip bounds from previous renders
-            // Otherwise old clip bounds will be passed to Python instead of manual offset
-            // clipStartSeconds = -1.0f;
-            // clipEndSeconds = -1.0f;
-        // }
-        if (clipIsTrimmed)
-        {
-            juce::Logger::writeToLog ("Clip is trimmed - automatically reading clip bounds from Pro Tools...");
+        actionButton.setButtonText ("Reading Clip Bounds...");
         
-            
-            actionButton.setButtonText ("Reading Clip Bounds...");
-            
-            // Store video and prompt for later use (after clip bounds are read)
-            currentVideoPath = videoPath;
-            currentPrompt = prompt.getText();
-            
-            // Start async clip bounds reading
-            // The timer will continue running, and handleClipBoundsResult() will proceed to generation
-            startClipBoundsRead (videoPath);
-            return;  // Exit here, will continue in handleClipBoundsResult()
-        }
-        else
-        {
-            // Clip not trimmed and no manual offset - use full video
-            juce::Logger::writeToLog ("Clip not trimmed - using full source video");
-            
-            // CRITICAL: Reset clip bounds from previous renders
-            // Otherwise old clip bounds will be passed to Python instead of using full video
-            clipStartSeconds = -1.0f;
-            clipEndSeconds = -1.0f;
-        }
+        // Store video and prompt for later use (after clip bounds are read)
+        currentVideoPath = videoPath;
+        currentPrompt = prompt.getText();
+        
+        // Start async clip bounds reading
+        // The timer will continue running, and handleClipBoundsResult() will proceed to generation
+        startClipBoundsRead (videoPath);
+        return;  // Exit here, will continue in handleClipBoundsResult()
         
         //======================================================================
         // Step 5: Start async audio generation (NO PTSL import yet!)
@@ -2804,10 +2772,24 @@ void PtV2AEditor::startSoundImportProcess (const SoundResult& sound, const juce:
 // Sound Search Integration (TASK 6)
 //==============================================================================
 
-void PtV2AEditor::triggerSoundSearch (const juce::String& videoPath, const juce::String& prompt)
+void PtV2AEditor::triggerSoundSearch (
+    const juce::String& videoPath, 
+    const juce::String& prompt,
+    const juce::String& videoOffset,
+    float timelineStart,
+    float timelineEnd,
+    float clipStartSeconds,
+    float clipEndSeconds,
+    bool autoDetectClipBounds
+)
 {
     juce::Logger::writeToLog ("=== Triggering Sound Search ===");
     juce::Logger::writeToLog ("Video: " + (videoPath.isEmpty() ? "none (T2A mode)" : videoPath));
+    juce::Logger::writeToLog ("Prompt: " + prompt);
+    juce::Logger::writeToLog ("Video Offset: " + videoOffset);
+    juce::Logger::writeToLog ("Timeline: " + juce::String(timelineStart) + "s - " + juce::String(timelineEnd) + "s");
+    juce::Logger::writeToLog ("Clip Bounds: " + juce::String(clipStartSeconds) + "s - " + juce::String(clipEndSeconds) + "s");
+    juce::Logger::writeToLog ("Auto-detect Clip Bounds: " + juce::String(autoDetectClipBounds ? "true" : "false"));
     juce::Logger::writeToLog ("Prompt: " + prompt);
     
     // Get Python executable and sound search script
@@ -2880,6 +2862,38 @@ void PtV2AEditor::triggerSoundSearch (const juce::String& videoPath, const juce:
     {
         args.add ("--video");
         args.add (videoPath);
+        
+        // Add timeline parameters if video is present
+        // These enable video trimming to avoid sending large videos to API
+        
+        // Add clip bounds if auto-detect is enabled
+        if (autoDetectClipBounds && clipStartSeconds >= 0.0f && clipEndSeconds >= 0.0f)
+        {
+            args.add ("--clip-start-seconds");
+            args.add (juce::String (clipStartSeconds));
+            args.add ("--clip-end-seconds");
+            args.add (juce::String (clipEndSeconds));
+            
+            juce::Logger::writeToLog ("Sound Search: Using auto-detected clip bounds: " + 
+                                     juce::String(clipStartSeconds) + "s - " + juce::String(clipEndSeconds) + "s");
+        }
+        // Otherwise, use manual video offset + timeline selection
+        else if (videoOffset.isNotEmpty() && timelineStart != 0.0f && timelineEnd != 0.0f)
+        {
+            args.add ("--video-offset");
+            args.add (videoOffset);
+            args.add ("--timeline-start");
+            args.add (juce::String (timelineStart));
+            args.add ("--timeline-end");
+            args.add (juce::String (timelineEnd));
+            
+            juce::Logger::writeToLog ("Sound Search: Using manual offset + timeline: offset=" + videoOffset + 
+                                     ", timeline=" + juce::String(timelineStart) + "s - " + juce::String(timelineEnd) + "s");
+        }
+        else
+        {
+            juce::Logger::writeToLog ("Sound Search: No timeline parameters - using full video (will be downscaled if >2MB)");
+        }
     }
     
     // Add text prompt if available
@@ -3142,7 +3156,8 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
     else
     {
         juce::Logger::writeToLog ("T2A mode: Text-only search");
-        triggerSoundSearch ("", promptText);
+        // T2A mode: no video, no timeline parameters needed
+        triggerSoundSearch ("", promptText, "", 0.0f, 0.0f, -1.0f, -1.0f, false);
     }
 }
 

@@ -61,6 +61,16 @@ from api.sound_search_client import (
 
 from cli.error_handler import safe_action_wrapper
 
+# Import video preprocessing functions
+from video import (
+    trim_and_maybe_downscale_video,
+    validate_video_file,
+)
+from ptsl_integration import (
+    timecode_to_seconds,
+)
+from api import VIDEO_DOWNSCALE_THRESHOLD_MB
+
 
 def action_health_check(args):
     """Check if Sound Search API is available"""
@@ -84,6 +94,8 @@ def action_search(args):
     """Search for sounds using video and/or text"""
     log_debug("Action: search")
     log_debug(f"Video: {args.video}, Text: {args.text}, Limit: {args.limit}")
+    log_debug(f"Timeline: {args.timeline_start}s - {args.timeline_end}s, Video offset: {args.video_offset}")
+    log_debug(f"Clip bounds: {args.clip_start_seconds}s - {args.clip_end_seconds}s")
     
     if not args.video and not args.text:
         log_debug("ERROR: Must provide either --video or --text")
@@ -91,6 +103,90 @@ def action_search(args):
             "status": "error",
             "message": "Must provide either --video or --text"
         }
+    
+    # === Video Preprocessing (Trim + Downscale) ===
+    # If video is provided, preprocess it before sending to server
+    # Important: Trim FIRST (reduces file size), then downscale if needed
+    video_path = args.video
+    
+    if video_path:
+        log_debug(f"=== DEBUG SOUND_SEARCH: Starting video preprocessing ===")
+        log_debug(f"=== DEBUG SOUND_SEARCH: Original video: {video_path} ===")
+        
+        # Check video file
+        file_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
+        log_debug(f"=== DEBUG SOUND_SEARCH: Original video size: {file_size_mb:.1f} MB ===")
+        
+        # === Video Trimming (if needed) ===
+        # Support same workflows as MMAudio/HunyuanVideo for consistency
+        
+        if args.clip_start_seconds is not None and args.clip_end_seconds is not None:
+            # Clip bounds provided (auto-detected or manual)
+            log_debug(f"=== DEBUG SOUND_SEARCH: Trimming video from {args.clip_start_seconds}s to {args.clip_end_seconds}s ===")
+            
+            trim_result = trim_and_maybe_downscale_video(
+                video_path=video_path,
+                start_seconds=args.clip_start_seconds,
+                end_seconds=args.clip_end_seconds
+            )
+            
+            if not trim_result['success']:
+                log_debug(f"=== DEBUG SOUND_SEARCH: Trimming FAILED: {trim_result.get('error')} ===")
+                return {
+                    "status": "error",
+                    "message": f"Video trimming failed: {trim_result.get('error')}"
+                }
+            
+            video_path = trim_result['output_path']
+            log_debug(f"=== DEBUG SOUND_SEARCH: Processed video: {Path(video_path).name} ===")
+            log_debug(f"=== DEBUG SOUND_SEARCH: {trim_result['original_size_mb']:.1f}MB → {trim_result['final_size_mb']:.1f}MB ===")
+        
+        elif args.video_offset and args.timeline_start != 0.0 and args.timeline_end != 0.0:
+            # Manual offset provided
+            log_debug(f"=== DEBUG SOUND_SEARCH: Processing with manual offset ===")
+            
+            try:
+                video_clip_timeline_start = timecode_to_seconds(args.video_offset)
+            except Exception as e:
+                log_debug(f"ERROR: Invalid video offset: {e}")
+                return {
+                    "status": "error",
+                    "message": f"Invalid video offset: {e}"
+                }
+            
+            timeline_in_seconds = args.timeline_start
+            timeline_out_seconds = args.timeline_end
+            
+            # Calculate source video trim points
+            relative_in_clip = timeline_in_seconds - video_clip_timeline_start
+            start_in_source = max(0, relative_in_clip)
+            end_in_source = relative_in_clip + (timeline_out_seconds - timeline_in_seconds)
+            
+            log_debug(f"=== DEBUG SOUND_SEARCH: Trimming source: {start_in_source}s - {end_in_source}s ===")
+            
+            trim_result = trim_and_maybe_downscale_video(
+                video_path=video_path,
+                start_seconds=start_in_source,
+                end_seconds=end_in_source
+            )
+            
+            if not trim_result['success']:
+                log_debug(f"=== DEBUG SOUND_SEARCH: Trimming FAILED: {trim_result.get('error')} ===")
+                return {
+                    "status": "error",
+                    "message": f"Video trimming failed: {trim_result.get('error')}"
+                }
+            
+            video_path = trim_result['output_path']
+            log_debug(f"=== DEBUG SOUND_SEARCH: Processed video: {Path(video_path).name} ===")
+            log_debug(f"=== DEBUG SOUND_SEARCH: {trim_result['original_size_mb']:.1f}MB → {trim_result['final_size_mb']:.1f}MB ===")
+        
+        else:
+            # No trimming needed, but may need downscaling for large untrimmed videos
+            log_debug(f"=== DEBUG SOUND_SEARCH: No trimming needed, video will be sent as-is ===")
+            # Note: downscaling will happen in api/sound_search_client.py for untrimmed videos
+        
+        log_debug(f"=== DEBUG SOUND_SEARCH: Final video for search: {video_path} ===")
     
     # Adjust text_weight based on input type
     effective_text_weight = args.text_weight
@@ -110,12 +206,12 @@ def action_search(args):
     log_debug(f"Starting search with text_weight={effective_text_weight}, num_frames={args.num_frames}")
     
     log_debug("Calling search_sounds() (search only, no download)...")
-    log_debug(f"  video_path: {args.video}")
+    log_debug(f"  video_path: {video_path}")
     log_debug(f"  text_query: {args.text}")
     log_debug(f"  limit: {args.limit}")
     
     results = search_sounds(
-        video_path=args.video,
+        video_path=video_path,  # Use preprocessed video (trimmed/downscaled if needed)
         text_query=args.text,
         limit=args.limit,
         text_weight=effective_text_weight,
@@ -314,6 +410,42 @@ def main():
         type=int,
         default=16,
         help='Number of frames to extract from video (default: 16)'
+    )
+    
+    # Video trimming parameters (Pro Tools integration)
+    parser.add_argument(
+        '--video-offset',
+        type=str,
+        default='',
+        help='Timeline position where video clip starts (e.g., "00:02" or "00:00:02:00")'
+    )
+    
+    parser.add_argument(
+        '--timeline-start',
+        type=float,
+        default=0.0,
+        help='Timeline selection start time in seconds'
+    )
+    
+    parser.add_argument(
+        '--timeline-end',
+        type=float,
+        default=0.0,
+        help='Timeline selection end time in seconds'
+    )
+    
+    parser.add_argument(
+        '--clip-start-seconds',
+        type=float,
+        default=None,
+        help='Clip start time in source video (seconds)'
+    )
+    
+    parser.add_argument(
+        '--clip-end-seconds',
+        type=float,
+        default=None,
+        help='Clip end time in source video (seconds)'
     )
     
     # Download parameters
