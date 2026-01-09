@@ -981,12 +981,12 @@ async def generate_audio(
                       Use "wav" for Pro Tools PTSL compatibility (avoids client-side conversion)
         full_precision: Use torch.float32 (high quality, slower) instead of torch.bfloat16 (default, faster)
     """
+    # Track request in queue immediately (before any processing)
+    global pending_requests
+    pending_requests += 1
+    logger.info(f"🔄 Request received (pending: {pending_requests})")
+    
     try:
-        # Track request in queue immediately (before any processing)
-        global pending_requests
-        pending_requests += 1
-        logger.info(f"🔄 Request received (pending: {pending_requests})")
-        
         # Determine mode: T2A (text-only) or V2A (video-to-audio)
         is_t2a_mode = video is None
         
@@ -1281,6 +1281,12 @@ async def generate_audio(
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # CRITICAL: Always decrement pending_requests, even on error
+        # This prevents failed requests from staying in queue forever
+        if pending_requests > 0:
+            pending_requests -= 1
+            logger.debug(f"📉 Request completed, pending_requests now: {pending_requests}")
 
 
 # ========== MEMORY PROFILING ENDPOINT ==========

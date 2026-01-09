@@ -927,12 +927,12 @@ async def generate_audio(
                        Effect is minimal - mainly improves numerical stability. ~10-20% more VRAM.
                        Recommended: False (default) for most use cases.
     """
+    # Track request in queue immediately (before any processing)
+    global pending_requests
+    pending_requests += 1
+    logger.info(f"🔄 Request received (pending: {pending_requests})")
+    
     try:
-        # Track request in queue immediately (before any processing)
-        global pending_requests
-        pending_requests += 1
-        logger.info(f"🔄 Request received (pending: {pending_requests})")
-
         # Save uploaded video to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
             content = await video.read()
@@ -1199,6 +1199,12 @@ async def generate_audio(
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # CRITICAL: Always decrement pending_requests, even on error
+        # This prevents failed requests from staying in queue forever
+        if pending_requests > 0:
+            pending_requests -= 1
+            logger.debug(f"📉 Request completed, pending_requests now: {pending_requests}")
 
 # ========== MEMORY PROFILING ==========
 @app.get("/memory/profile")
