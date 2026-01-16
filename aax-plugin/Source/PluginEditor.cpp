@@ -32,14 +32,25 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     soundRecModeButton.setRadioGroupId (1000);  // Same group as Audio Generation
     soundRecModeButton.onClick = [this] { handleWorkflowModeChange(); };
     contentComponent.addAndMakeVisible (soundRecModeButton);
+    
+    autoSpottingModeButton.setRadioGroupId (1000);  // Same group as other modes
+    autoSpottingModeButton.onClick = [this] { handleWorkflowModeChange(); };
+    contentComponent.addAndMakeVisible (autoSpottingModeButton);
+    
+    // Configure Auto Spotting info label
+    autoSpottingInfoLabel.setJustificationType (juce::Justification::centredLeft);
+    autoSpottingInfoLabel.setVisible (false);  // Initially hidden (only visible in Auto Spotting mode)
+    contentComponent.addAndMakeVisible (autoSpottingInfoLabel);
 
     // Configure unified action button (changes based on workflow mode)
     actionButton.onClick = [this]
     {
         if (currentWorkflowMode == WorkflowMode::AudioGeneration)
             handleRenderButtonClicked();
-        else
+        else if (currentWorkflowMode == WorkflowMode::SoundRecommendation)
             handleRecommendSoundsButtonClicked();
+        else if (currentWorkflowMode == WorkflowMode::AutoSpotting)
+            handleAutoSpottingButtonClicked();
     };
     contentComponent.addAndMakeVisible (actionButton);
     
@@ -366,7 +377,7 @@ void PtV2AEditor::resized()
     int contentHeight = 24 +  // Top margin
                         28 +  // Mode row
                         20 +  // Spacing
-                        28 +  // Prompt row
+                        28 +  // Prompt row (or Auto Spotting info label - same space)
                         20 +  // Spacing
                         28 +  // Negative prompt row
                         20 +  // Spacing
@@ -384,28 +395,39 @@ void PtV2AEditor::resized()
                         24;   // Bottom margin
     
     // Set content component size (width matches viewport for horizontal scroll, calculated height)
-    int minContentWidth = 750;  // Minimum width to ensure all content fits
+    int minContentWidth = 700;  // Minimum width to ensure all content fits
     int actualWidth = juce::jmax (getWidth(), minContentWidth);
     contentComponent.setSize (actualWidth, contentHeight);
     
     // Layout components within contentComponent with 24px margin around edges
     auto r = contentComponent.getLocalBounds().reduced (24);
     
-    // Mode selection row at the top - use proportional layout
+    // Mode selection row at the top - use proportional layout with even spacing
     auto modeRow = r.removeFromTop (28);
     modeLabel.setBounds (modeRow.removeFromLeft (65));
     modeRow.removeFromLeft (10);
     int availableWidth = modeRow.getWidth();
-    int buttonWidth = (availableWidth - 15) / 2;  // Split available space for two buttons with 15px gap
+    int buttonGap = 15;
+    int buttonWidth = (availableWidth - 2 * buttonGap) / 3;  // Even width for all three buttons
     audioGenModeButton.setBounds (modeRow.removeFromLeft (buttonWidth));
-    modeRow.removeFromLeft (15);
-    soundRecModeButton.setBounds (modeRow);  // Use remaining space
+    modeRow.removeFromLeft (buttonGap);
+    soundRecModeButton.setBounds (modeRow.removeFromLeft (buttonWidth));
+    modeRow.removeFromLeft (buttonGap);
+    autoSpottingModeButton.setBounds (modeRow.removeFromLeft (buttonWidth));
     
     // 20px spacing after mode selection
     r.removeFromTop (20);
     
-    // Prompt text input: full width, 28px height
+    // Prompt text input OR Auto Spotting info label (share same space)
     auto promptRow = r.removeFromTop (28);
+    
+    // Auto Spotting info label (positioned where prompt is, only visible in Auto Spotting mode)
+    auto autoSpottingInfoRow = promptRow;
+    autoSpottingInfoRow.removeFromLeft (65);  // Skip label area to align with prompt field
+    autoSpottingInfoRow.removeFromLeft (10);  // Skip spacing
+    autoSpottingInfoLabel.setBounds (autoSpottingInfoRow);
+    
+    // Prompt text input: full width, 28px height
     promptLabel.setBounds (promptRow.removeFromLeft (65));
     promptRow.removeFromLeft (10);    
     prompt.setBounds (promptRow);
@@ -1230,6 +1252,95 @@ void PtV2AEditor::timerCallback()
             
             // Cleanup output file
             outputFile.deleteFile();
+            break;
+        }
+        
+        case AsyncState::AutoSpottingAnalysis:
+        {
+            // Poll Auto Spotting wizard process (fake progress based on time, avoid stdout reading during PTSL ops)
+            // Timeout: 45 seconds (11s fake delays + 34s safety buffer for Python script)
+            if (elapsed.inMilliseconds() > 45000)
+            {
+                juce::Logger::writeToLog ("ERROR: Auto Spotting wizard timed out after 45s");
+                
+                stopTimer();
+                
+                if (ptslProcess)
+                {
+                    ptslProcess->kill();
+                    ptslProcess.reset();
+                }
+                
+                currentAsyncState = AsyncState::Idle;
+                
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Auto Spotting Timeout",
+                    "Auto Spotting analysis timed out after 45 seconds.\n\n"
+                    "Please check Pro Tools connection and try again.",
+                    "OK"
+                );
+                
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Analyze & Spot Markers");
+                return;
+            }
+            
+            // Update button text based on elapsed time (fake progress to avoid stdout polling during PTSL)
+            int elapsedSeconds = elapsed.inMilliseconds() / 1000;
+            if (elapsedSeconds < 3)
+                actionButton.setButtonText ("Analyzing video...");
+            else if (elapsedSeconds < 7)
+                actionButton.setButtonText ("Detecting audio cues...");
+            else if (elapsedSeconds < 11)
+                actionButton.setButtonText ("Creating markers...");
+            else
+                actionButton.setButtonText ("Finalizing...");
+            
+            // Check if process is still running (don't read stdout to avoid PTSL interference)
+            if (ptslProcess && ptslProcess->isRunning())
+            {
+                return;  // Keep polling
+            }
+            
+            // Process finished - check exit code
+            int exitCode = ptslProcess ? ptslProcess->getExitCode() : 1;
+            juce::Logger::writeToLog ("Auto Spotting wizard completed after " + 
+                                      juce::String (elapsed.inSeconds(), 1) + "s with exit code " + 
+                                      juce::String (exitCode));
+            
+            stopTimer();
+            ptslProcess.reset();
+            currentAsyncState = AsyncState::Idle;
+            
+            actionButton.setEnabled (true);
+            actionButton.setButtonText ("Analyze & Spot Markers");
+            
+            // Show result based on exit code
+            if (exitCode == 0)
+            {
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::InfoIcon,
+                    "Auto Spotting Complete",
+                    "Analysis complete! Memory locations have been placed at detected audio events.\n\n"
+                    "Check the timeline ruler to see the automatically generated markers.",
+                    "OK"
+                );
+            }
+            else
+            {
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Auto Spotting Failed",
+                    "Auto Spotting wizard encountered an error.\n\n"
+                    "Please check the log file for details and ensure:\n"
+                    "- Pro Tools session is open\n"
+                    "- PTSL server is running\n"
+                    "- Memory locations are configured in the script",
+                    "OK"
+                );
+            }
+            
             break;
         }
         
@@ -2393,30 +2504,45 @@ void PtV2AEditor::updateAPICredentialStatus()
 //==============================================================================
 void PtV2AEditor::handleWorkflowModeChange()
 {
-    // Update current workflow mode
-    currentWorkflowMode = audioGenModeButton.getToggleState() 
-        ? WorkflowMode::AudioGeneration 
-        : WorkflowMode::SoundRecommendation;
+    // Update current workflow mode based on which button is selected
+    if (audioGenModeButton.getToggleState())
+        currentWorkflowMode = WorkflowMode::AudioGeneration;
+    else if (soundRecModeButton.getToggleState())
+        currentWorkflowMode = WorkflowMode::SoundRecommendation;
+    else if (autoSpottingModeButton.getToggleState())
+        currentWorkflowMode = WorkflowMode::AutoSpotting;
     
     bool isAudioGen = (currentWorkflowMode == WorkflowMode::AudioGeneration);
+    bool isSoundRec = (currentWorkflowMode == WorkflowMode::SoundRecommendation);
+    bool isAutoSpotting = (currentWorkflowMode == WorkflowMode::AutoSpotting);
     
     juce::Logger::writeToLog ("=== Workflow Mode Changed ===");
-    juce::Logger::writeToLog ("New mode: " + juce::String (isAudioGen ? "Audio Generation" : "Sound Recommendation"));
+    juce::String modeName = isAudioGen ? "Audio Generation" : (isSoundRec ? "Sound Recommendation" : "Auto Spotting");
+    juce::Logger::writeToLog ("New mode: " + modeName);
     
     // Update action button text and appearance
     if (isAudioGen)
     {
         actionButton.setButtonText ("Render Audio");
     }
-    else
+    else if (isSoundRec)
     {
         actionButton.setButtonText ("Recommend Sounds");
     }
+    else if (isAutoSpotting)
+    {
+        actionButton.setButtonText ("Analyze & Spot Markers");
+    }
     
     // Show/hide fields based on workflow mode
-    // Prompt is always visible (used in both modes)
+    // Prompt is visible in Audio Gen and Sound Rec, hidden in Auto Spotting
+    prompt.setVisible (!isAutoSpotting);
+    promptLabel.setVisible (!isAutoSpotting);
     
-    // Audio Generation specific fields (hidden in Sound Recommendation mode)
+    // Auto Spotting info label only visible in Auto Spotting mode
+    autoSpottingInfoLabel.setVisible (isAutoSpotting);
+    
+    // Audio Generation specific fields (hidden in Sound Recommendation and Auto Spotting)
     negativePromptInput.setVisible (isAudioGen);
     negativePromptLabel.setVisible (isAudioGen);
     
@@ -2426,12 +2552,11 @@ void PtV2AEditor::handleWorkflowModeChange()
     v2aModeButton.setVisible (isAudioGen);
     t2aModeButton.setVisible (isAudioGen);
     
-    // Duration only visible in Audio Gen AND T2A mode
-    bool isDurationVisible = isAudioGen && isT2AMode;
-    durationComboBox.setVisible (isDurationVisible);
-    durationLabel.setVisible (isDurationVisible);
+    // Duration and model always visible in Audio Gen (enabled state controlled by V2A/T2A)
+    durationComboBox.setVisible (isAudioGen);
+    durationLabel.setVisible (isAudioGen);
     
-    modelProviderComboBox.setVisible (isAudioGen && !isT2AMode);  // Locked to MMAudio in T2A
+    modelProviderComboBox.setVisible (isAudioGen);
     modelLabel.setVisible (isAudioGen);
     
     repaint();
@@ -3167,17 +3292,57 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
     {
         juce::Logger::writeToLog ("V2A mode: Starting async PTSL workflow...");
         
-        // Start PTSL process to get video path
-        startTimelineSelectionRead();
-        
-        // Override state to indicate this is for sound search, not audio generation
+        // Start PTSL timeline selection read (non-blocking)
         currentAsyncState = AsyncState::ReadingTimelineForSoundSearch;
+        startTimer (TIMER_INTERVAL_MS);
+        startTimelineSelectionRead();
     }
     else
     {
-        juce::Logger::writeToLog ("T2A mode: Text-only search");
-        // T2A mode: no video, no timeline parameters needed
+        juce::Logger::writeToLog ("T2A mode: Triggering sound search with text-only...");
+        
+        // T2A mode: Search without video (text-only)
+        // Pass empty string for video path, only use prompt
         triggerSoundSearch ("", promptText, "", 0.0f, 0.0f, -1.0f, -1.0f, false);
     }
+}
+
+//==============================================================================
+// Event Handler - Auto Spotting Button Click
+//==============================================================================
+void PtV2AEditor::handleAutoSpottingButtonClicked()
+{
+    juce::Logger::writeToLog ("=== Auto Spotting Button Clicked ===");
+    juce::Logger::writeToLog ("Starting Auto Spotting wizard (Wizard of Oz prototype)...");
+    
+    // Validate script exists before starting fake delays
+    auto scriptFile = processor.getAPIClientScript();
+    auto companionDir = scriptFile.getParentDirectory();
+    auto scriptPath = companionDir.getChildFile ("auto_spotting_wizard.py");
+    
+    if (!scriptPath.existsAsFile())
+    {
+        juce::Logger::writeToLog ("ERROR: auto_spotting_wizard.py not found at: " + scriptPath.getFullPathName());
+        
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon,
+            "Error: Auto Spotting Script Not Found",
+            "Could not find auto_spotting_wizard.py script.\n\n"
+            "Expected location: " + scriptPath.getFullPathName(),
+            "OK"
+        );
+        
+        return;
+    }
+    
+    // Start timer for fake progress (Python script will be started after 11s in timerCallback)
+    actionButton.setEnabled (false);
+    actionButton.setButtonText ("Analyzing video...");
+    
+    currentAsyncState = AsyncState::AutoSpottingAnalysis;
+    asyncOperationStartTime = juce::Time::getCurrentTime();
+    startTimer (TIMER_INTERVAL_MS);
+    
+    juce::Logger::writeToLog ("Auto Spotting timer started (11s fake delay before marker creation)");
 }
 

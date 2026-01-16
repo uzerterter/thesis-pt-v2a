@@ -121,6 +121,12 @@ add_custom_command(TARGET pt_v2a_AAX PRE_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${COMPANION_DIR}/sound_search_api_client.py
         ${RESOURCES_PYTHON_SCRIPTS}/sound_search_api_client.py
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${COMPANION_DIR}/auto_spotting_wizard.py
+        ${RESOURCES_PYTHON_SCRIPTS}/auto_spotting_wizard.py
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/extract_memory_locations.py
+        ${RESOURCES_PYTHON_SCRIPTS}/extract_memory_locations.py
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${COMPANION_DIR}/ptsl_integration
         ${RESOURCES_PYTHON_SITEPACKAGES}/ptsl_integration

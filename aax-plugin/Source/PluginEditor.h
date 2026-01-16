@@ -101,11 +101,18 @@ private:
     
     /**
      * Mode selection radio buttons
-     * User chooses between Audio Generation (Generative AI) or Sound Recommendation (Database)
+     * User chooses between Audio Generation (Generative AI), Sound Recommendation (Database), or Auto Spotting (Wizard of Oz)
      */
     juce::Label modeLabel { {}, "Mode:" };
     juce::ToggleButton audioGenModeButton { "Audio Generation" };
     juce::ToggleButton soundRecModeButton { "Sound Recommendation" };
+    juce::ToggleButton autoSpottingModeButton { "Spotting Memory Locations" };
+    
+    /**
+     * Info label for Auto Spotting mode
+     * Displayed when Auto Spotting mode is active
+     */
+    juce::Label autoSpottingInfoLabel { {}, "Automatically detects audio events in video and places markers at detected positions" };
     
     /**
      * Unified action button - changes function based on selected mode
@@ -299,10 +306,23 @@ private:
     void handleGenerationModeChange();
     
     /**
-     * Handle workflow mode change (Audio Generation <-> Sound Recommendation)
+     * Handle workflow mode change (Audio Generation <-> Sound Recommendation <-> Auto Spotting)
      * Updates UI: enables/disables relevant fields, changes action button text
      */
     void handleWorkflowModeChange();
+    
+    /**
+     * Handle Auto Spotting button click - Wizard of Oz prototype
+     * Simulates automatic marker detection with fake progress and creates memory locations
+     * 
+     * Steps:
+     *   1. Start Python script for fake progress + memory location creation
+     *   2. Show progress feedback via timer (12-15s)
+     *   3. Display success message
+     * 
+     * @note For user study only - creates hardcoded memory locations
+     */
+    void handleAutoSpottingButtonClicked();
     
     /**
      * Update API credential status warning
@@ -506,7 +526,8 @@ private:
         SearchingSounds,                // Python searching sounds (polling for JSON output)
         DownloadingSingleSound,         // Python downloading single sound (polling for JSON output)
         ImportingAudio,                 // Importing generated audio to Pro Tools via PTSL
-        ImportingSoundFX                // Importing sound library audio to Pro Tools via PTSL
+        ImportingSoundFX,               // Importing sound library audio to Pro Tools via PTSL
+        AutoSpottingAnalysis            // Auto Spotting wizard: fake progress + memory location creation
     };
     
     AsyncState currentAsyncState = AsyncState::Idle;
@@ -515,7 +536,8 @@ private:
     enum class WorkflowMode
     {
         AudioGeneration,
-        SoundRecommendation
+        SoundRecommendation,
+        AutoSpotting
     };
     
     WorkflowMode currentWorkflowMode = WorkflowMode::AudioGeneration;
