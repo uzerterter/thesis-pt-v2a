@@ -104,8 +104,8 @@ private:
      * User chooses between Audio Generation (Generative AI) or Sound Recommendation (Database)
      */
     juce::Label modeLabel { {}, "Mode:" };
-    juce::ToggleButton audioGenModeButton { "Audio Generation (Generative AI)" };
-    juce::ToggleButton soundRecModeButton { "Sound Recommendation (from Database)" };
+    juce::ToggleButton audioGenModeButton { "Audio Generation" };
+    juce::ToggleButton soundRecModeButton { "Sound Recommendation" };
     
     /**
      * Unified action button - changes function based on selected mode
@@ -135,6 +135,7 @@ private:
      * Allows user to enter CF Access credentials for secure API access
      */
     juce::TextButton settingsButton { "API Settings" };
+
     
     /**
      * Warning label for invalid/missing API credentials

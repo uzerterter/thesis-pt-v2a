@@ -10,7 +10,7 @@ PtV2AEditor::PtV2AEditor (PtV2AProcessor& p)
     // Setup viewport for scrolling
     addAndMakeVisible (viewport);
     viewport.setViewedComponent (&contentComponent, false);  // false = we manage the content component's lifetime
-    viewport.setScrollBarsShown (true, false);  // Vertical scrollbar, no horizontal scrollbar
+    viewport.setScrollBarsShown (true, true);  // Vertical and horizontal scrollbars
     
     // Configure text input for prompt
     prompt.setMultiLine (true);  // Allow line breaks
@@ -383,19 +383,23 @@ void PtV2AEditor::resized()
                         28 +  // Settings button row
                         24;   // Bottom margin
     
-    // Set content component size (full viewport width, calculated height)
-    contentComponent.setSize (getWidth(), contentHeight);
+    // Set content component size (width matches viewport for horizontal scroll, calculated height)
+    int minContentWidth = 750;  // Minimum width to ensure all content fits
+    int actualWidth = juce::jmax (getWidth(), minContentWidth);
+    contentComponent.setSize (actualWidth, contentHeight);
     
     // Layout components within contentComponent with 24px margin around edges
     auto r = contentComponent.getLocalBounds().reduced (24);
     
-    // Mode selection row at the top
+    // Mode selection row at the top - use proportional layout
     auto modeRow = r.removeFromTop (28);
     modeLabel.setBounds (modeRow.removeFromLeft (65));
     modeRow.removeFromLeft (10);
-    audioGenModeButton.setBounds (modeRow.removeFromLeft (280));
+    int availableWidth = modeRow.getWidth();
+    int buttonWidth = (availableWidth - 15) / 2;  // Split available space for two buttons with 15px gap
+    audioGenModeButton.setBounds (modeRow.removeFromLeft (buttonWidth));
     modeRow.removeFromLeft (15);
-    soundRecModeButton.setBounds (modeRow.removeFromLeft (280));
+    soundRecModeButton.setBounds (modeRow);  // Use remaining space
     
     // 20px spacing after mode selection
     r.removeFromTop (20);
@@ -418,23 +422,39 @@ void PtV2AEditor::resized()
     // 20px spacing before next row
     r.removeFromTop (20);
     
-    // Seed and generation mode row: Label + Input + Radio Buttons + Duration
+    // Seed and generation mode row: Label + Input + Radio Buttons + Duration - responsive layout
     auto seedRow = r.removeFromTop (28);
     seedLabel.setBounds (seedRow.removeFromLeft (65));
     seedRow.removeFromLeft (10);
+    
+    // Fixed width for seed input
     seedInput.setBounds (seedRow.removeFromLeft (120));
     seedRow.removeFromLeft (20);
     
+    // Calculate remaining space for V2A/T2A buttons and duration
+    int remainingWidth = seedRow.getWidth();
+    int v2aWidth = juce::jmin (140, remainingWidth * 3 / 10);  // Roughly 30% or 140px
+    int t2aWidth = juce::jmin (130, remainingWidth * 3 / 10);  // Roughly 30% or 130px
+    
     // Radio buttons for V2A/T2A mode
-    v2aModeButton.setBounds (seedRow.removeFromLeft (140));
+    v2aModeButton.setBounds (seedRow.removeFromLeft (v2aWidth));
     seedRow.removeFromLeft (10);
-    t2aModeButton.setBounds (seedRow.removeFromLeft (130));
+    t2aModeButton.setBounds (seedRow.removeFromLeft (t2aWidth));
     seedRow.removeFromLeft (20);
     
-    // Duration controls (only active in T2A mode)
-    durationLabel.setBounds (seedRow.removeFromLeft (70));
-    seedRow.removeFromLeft (5);
-    durationComboBox.setBounds (seedRow.removeFromLeft (80));
+    // Duration controls (only active in T2A mode) - use remaining space
+    if (seedRow.getWidth() > 155)  // Only show if enough space
+    {
+        durationLabel.setBounds (seedRow.removeFromLeft (70));
+        seedRow.removeFromLeft (5);
+        durationComboBox.setBounds (seedRow.removeFromLeft (80));
+    }
+    else
+    {
+        durationLabel.setBounds (seedRow.removeFromLeft (juce::jmin (70, seedRow.getWidth() / 2)));
+        seedRow.removeFromLeft (5);
+        durationComboBox.setBounds (seedRow);
+    }
     
     // 20px spacing before model selection
     r.removeFromTop (20);
@@ -2393,26 +2413,26 @@ void PtV2AEditor::handleWorkflowModeChange()
         actionButton.setButtonText ("Recommend Sounds");
     }
     
-    // Enable/disable fields based on workflow mode
-    // Prompt is always active (used in both modes)
+    // Show/hide fields based on workflow mode
+    // Prompt is always visible (used in both modes)
     
-    // Audio Generation specific fields (disabled in Sound Recommendation mode)
-    negativePromptInput.setEnabled (isAudioGen);
-    negativePromptLabel.setEnabled (isAudioGen);
+    // Audio Generation specific fields (hidden in Sound Recommendation mode)
+    negativePromptInput.setVisible (isAudioGen);
+    negativePromptLabel.setVisible (isAudioGen);
     
-    seedInput.setEnabled (isAudioGen);
-    seedLabel.setEnabled (isAudioGen);
+    seedInput.setVisible (isAudioGen);
+    seedLabel.setVisible (isAudioGen);
     
-    v2aModeButton.setEnabled (isAudioGen);
-    t2aModeButton.setEnabled (isAudioGen);
+    v2aModeButton.setVisible (isAudioGen);
+    t2aModeButton.setVisible (isAudioGen);
     
-    // Duration only enabled in Audio Gen AND T2A mode
-    bool isDurationEnabled = isAudioGen && isT2AMode;
-    durationComboBox.setEnabled (isDurationEnabled);
-    durationLabel.setEnabled (isDurationEnabled);
+    // Duration only visible in Audio Gen AND T2A mode
+    bool isDurationVisible = isAudioGen && isT2AMode;
+    durationComboBox.setVisible (isDurationVisible);
+    durationLabel.setVisible (isDurationVisible);
     
-    modelProviderComboBox.setEnabled (isAudioGen && !isT2AMode);  // Locked to MMAudio in T2A
-    modelLabel.setEnabled (isAudioGen);
+    modelProviderComboBox.setVisible (isAudioGen && !isT2AMode);  // Locked to MMAudio in T2A
+    modelLabel.setVisible (isAudioGen);
     
     repaint();
 }
