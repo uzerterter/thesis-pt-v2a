@@ -138,51 +138,42 @@ def search_sounds(
         if verbose:
             print(f"   Num Frames: {num_frames}")
     
-    # Preprocess video if provided (downscale to 480p for faster upload/processing)
-    preprocessed_video_path = None
-    if video_path:
-        if downscale_video:
-            if verbose:
-                print(f"[PREPROCESS] Downscaling video to 480p...")
-            preprocess_result = downscale_video(video_path)
-            if preprocess_result['success']:
-                preprocessed_video_path = preprocess_result['output_path']
-                if verbose:
-                    print(f"[PREPROCESS] Downscaled: {preprocess_result['original_size_mb']}MB → {preprocess_result['downscaled_size_mb']}MB")
-                    print(f"[PREPROCESS] Compression: {preprocess_result['compression_ratio']}x smaller")
-                    print(f"[PREPROCESS] Time: {preprocess_result['encoding_time']}s")
-                # Use preprocessed video for API call
-                video_path = preprocessed_video_path
-            else:
-                if verbose:
-                    print(f"[WARN] Preprocessing failed, using original video: {preprocess_result['error']}")
-        else:
-            if verbose:
-                print(f"[WARN] Video preprocessing not available (video.ffmpeg module not imported)")
+    # Video preprocessing is now handled in sound_search_api_client.py
+    # using trim_and_maybe_downscale_video() for consistency with audio generation
+    # No additional preprocessing needed here
     
     try:
         url = f"{get_sound_search_url()}/search/sounds"
         
-        files = {}
         data = {
             'limit': limit,
             'text_weight': text_weight,
             'num_frames': num_frames
         }
         
-        if video_path:
-            files['video'] = open(video_path, 'rb')
-        
         if text_query:
             data['text'] = text_query
         
-        response = requests.post(
-            url,
-            files=files,
-            data=data,
-            headers=get_cf_headers(),
-            timeout=120  # Increased from 60s to match C++ timeout
-        )
+        if video_path:
+            # V2A mode: Upload video file (same as audio generation)
+            with open(video_path, 'rb') as video_file:
+                files = {"video": (Path(video_path).name, video_file, "video/mp4")}
+                response = requests.post(
+                    url,
+                    files=files,
+                    data=data,
+                    headers=get_cf_headers(),
+                    timeout=120
+                )
+        else:
+            # Text-only mode: No file upload
+            response = requests.post(
+                url,
+                data=data,
+                headers=get_cf_headers(),
+                timeout=120
+            )
+        
         response.raise_for_status()
         
         result = response.json()
@@ -225,19 +216,7 @@ def search_sounds(
             f.write(f"[{datetime.datetime.now()}] RequestException: {e}\n")
             f.write(traceback.format_exc())
         return None
-    finally:
-        if 'video' in files:
-            files['video'].close()
-        
-        # Cleanup preprocessed video
-        if preprocessed_video_path and os.path.exists(preprocessed_video_path):
-            try:
-                os.remove(preprocessed_video_path)
-                if verbose:
-                    print(f"[CLEANUP] Removed preprocessed video: {Path(preprocessed_video_path).name}")
-            except Exception as e:
-                if verbose:
-                    print(f"[WARN] Failed to cleanup preprocessed video: {e}")
+
 
 
 def get_sound_info(sound_id: int, quiet: bool = False) -> Optional[Dict[str, Any]]:
@@ -297,7 +276,7 @@ def download_sound(
         if verbose:
             print(f"[DOWNLOAD] Requesting: {url}")
         
-        response = requests.get(url, headers=get_cf_headers(), timeout=30)
+        response = requests.get(url, headers=get_cf_headers(), timeout=60)
         response.raise_for_status()
         
         if verbose:

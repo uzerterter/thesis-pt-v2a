@@ -112,7 +112,7 @@ private:
      * Info label for Auto Spotting mode
      * Displayed when Auto Spotting mode is active
      */
-    juce::Label autoSpottingInfoLabel { {}, "Automatically detects audio events in video and places markers at detected positions" };
+    juce::Label autoSpottingInfoLabel { {}, "Automatically detects audio events in video and places markers at detected positions." };
     
     /**
      * Unified action button - changes function based on selected mode

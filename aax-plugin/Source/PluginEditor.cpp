@@ -606,7 +606,11 @@ void PtV2AEditor::startTimelineSelectionRead()
     
     // Record start time for timeout detection
     asyncOperationStartTime = juce::Time::getCurrentTime();
-    currentAsyncState = AsyncState::ReadingTimeline;
+    
+    // IMPORTANT: Only set state if not already set by caller
+    // Sound Search pre-sets ReadingTimelineForSoundSearch before calling this function
+    if (currentAsyncState == AsyncState::Idle)
+        currentAsyncState = AsyncState::ReadingTimeline;
     
     // Start timer to poll process status every 100ms
     startTimer (TIMER_INTERVAL_MS);
@@ -1166,10 +1170,10 @@ void PtV2AEditor::timerCallback()
         case AsyncState::DownloadingSingleSound:
         {
             // Poll for sound download output file
-            // Check for timeout (30 seconds for single sound download)
-            if (elapsed.inMilliseconds() > 30000)
+            // Check for timeout (60 seconds for single sound download)
+            if (elapsed.inMilliseconds() > 60000)
             {
-                juce::Logger::writeToLog ("ERROR: Sound download timed out after 30s");
+                juce::Logger::writeToLog ("ERROR: Sound download timed out after 60s");
                 
                 stopTimer();
                 currentAsyncState = AsyncState::Idle;
@@ -1185,7 +1189,7 @@ void PtV2AEditor::timerCallback()
                 juce::AlertWindow::showMessageBoxAsync (
                     juce::MessageBoxIconType::WarningIcon,
                     "Download Timeout",
-                    "Sound download timed out after 30 seconds.\n\n"
+                    "Sound download timed out after 60 seconds.\n\n"
                     "Please check your network connection and try again.",
                     "OK"
                 );
@@ -1289,22 +1293,101 @@ void PtV2AEditor::timerCallback()
             // Update button text based on elapsed time (fake progress to avoid stdout polling during PTSL)
             int elapsedSeconds = elapsed.inMilliseconds() / 1000;
             if (elapsedSeconds < 3)
+            {
                 actionButton.setButtonText ("Analyzing video...");
+            }
             else if (elapsedSeconds < 7)
+            {
                 actionButton.setButtonText ("Detecting audio cues...");
+            }
             else if (elapsedSeconds < 11)
+            {
                 actionButton.setButtonText ("Creating markers...");
+            }
             else
+            {
                 actionButton.setButtonText ("Finalizing...");
+                
+                // Start Python process after 11s fake delay (only once)
+                if (!ptslProcess)
+                {
+                    juce::Logger::writeToLog ("=== Starting Python Script (after 11s fake delay) ===");
+                    
+                    auto scriptFile = processor.getAPIClientScript();
+                    auto companionDir = scriptFile.getParentDirectory();
+                    auto scriptPath = companionDir.getChildFile ("auto_spotting_wizard.py");
+                    
+                    juce::String pythonExe = processor.getPythonExecutable();
+                    
+                    juce::Logger::writeToLog ("Python executable: " + pythonExe);
+                    juce::Logger::writeToLog ("Script path: " + scriptPath.getFullPathName());
+                    
+                    // Build command: python.exe auto_spotting_wizard.py
+                    juce::StringArray args;
+                    args.add (pythonExe);  // First arg: Python interpreter
+                    args.add (scriptPath.getFullPathName());  // Second arg: Script to run
+                    
+                    juce::Logger::writeToLog ("Full command: " + args.joinIntoString (" "));
+                    
+                    ptslProcess = std::make_unique<juce::ChildProcess>();
+                    
+                    if (!ptslProcess->start (args))
+                    {
+                        juce::Logger::writeToLog ("ERROR: Failed to start Python process");
+                        
+                        stopTimer();
+                        ptslProcess.reset();
+                        currentAsyncState = AsyncState::Idle;
+                        
+                        actionButton.setEnabled (true);
+                        actionButton.setButtonText ("Analyze & Spot Markers");
+                        
+                        juce::AlertWindow::showMessageBoxAsync (
+                            juce::MessageBoxIconType::WarningIcon,
+                            "Failed to Start Script",
+                            "Could not start Auto Spotting wizard script.\n\n"
+                            "Please check the log file for details.",
+                            "OK"
+                        );
+                        
+                        return;
+                    }
+                    
+                    juce::Logger::writeToLog ("Python process started successfully");
+                }
+            }
+            
+            // If process hasn't been started yet (< 11s), keep waiting
+            if (!ptslProcess)
+            {
+                return;  // Keep polling until 11s mark
+            }
             
             // Check if process is still running (don't read stdout to avoid PTSL interference)
-            if (ptslProcess && ptslProcess->isRunning())
+            if (ptslProcess->isRunning())
             {
                 return;  // Keep polling
             }
             
-            // Process finished - check exit code
-            int exitCode = ptslProcess ? ptslProcess->getExitCode() : 1;
+            // Process finished - check exit code and capture any error output
+            int exitCode = ptslProcess->getExitCode();
+            
+            // Try to read stderr for error messages
+            juce::String errorOutput;
+            if (ptslProcess)
+            {
+                char buffer[4096];
+                int bytesRead = ptslProcess->readProcessOutput (buffer, sizeof(buffer) - 1);
+                if (bytesRead > 0)
+                {
+                    buffer[bytesRead] = '\0';
+                    errorOutput = juce::String (buffer);
+                    juce::Logger::writeToLog ("=== Python Script Output ===");
+                    juce::Logger::writeToLog (errorOutput);
+                    juce::Logger::writeToLog ("=== End Output ===");
+                }
+            }
+            
             juce::Logger::writeToLog ("Auto Spotting wizard completed after " + 
                                       juce::String (elapsed.inSeconds(), 1) + "s with exit code " + 
                                       juce::String (exitCode));
@@ -1329,16 +1412,46 @@ void PtV2AEditor::timerCallback()
             }
             else
             {
-                juce::AlertWindow::showMessageBoxAsync (
-                    juce::MessageBoxIconType::WarningIcon,
-                    "Auto Spotting Failed",
-                    "Auto Spotting wizard encountered an error.\n\n"
-                    "Please check the log file for details and ensure:\n"
-                    "- Pro Tools session is open\n"
-                    "- PTSL server is running\n"
-                    "- Memory locations are configured in the script",
-                    "OK"
-                );
+                // Parse error output to detect specific issues
+                bool duplicateMarkers = errorOutput.contains ("already used") || 
+                                       errorOutput.contains ("InvalidParameter") ||
+                                       (exitCode == 1 && errorOutput.contains ("created\": 0"));
+                
+                if (duplicateMarkers)
+                {
+                    // User-friendly message for duplicate markers (common in user study)
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Memory Locations Already Exist",
+                        "Auto Spotting could not create markers because they already exist.\n\n"
+                        "To run Auto Spotting again:\n"
+                        "1. Delete all existing memory locations in Pro Tools\n"
+                        "2. Click 'Analyze & Spot Markers' again\n\n"
+                        "Note: This is a prototype limitation - real implementation would handle duplicates automatically.",
+                        "OK"
+                    );
+                }
+                else
+                {
+                    // Generic error message for other failures
+                    juce::String errorMsg = "Auto Spotting wizard encountered an error.\n\n"
+                                            "Please check the log file for details and ensure:\n"
+                                            "- Pro Tools session is open\n"
+                                            "- PTSL server is running\n"
+                                            "- Memory locations are configured in the script";
+                    
+                    if (errorOutput.isNotEmpty())
+                    {
+                        errorMsg += "\n\nError details:\n" + errorOutput.substring (0, 200);
+                    }
+                    
+                    juce::AlertWindow::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Auto Spotting Failed",
+                        errorMsg,
+                        "OK"
+                    );
+                }
             }
             
             break;
@@ -2549,6 +2662,8 @@ void PtV2AEditor::handleWorkflowModeChange()
     seedInput.setVisible (isAudioGen);
     seedLabel.setVisible (isAudioGen);
     
+    // V2A/T2A toggle only visible in Audio Generation (not used in Sound Recommendation)
+    // Sound Search automatically tries video detection first, then falls back to text-only
     v2aModeButton.setVisible (isAudioGen);
     t2aModeButton.setVisible (isAudioGen);
     
@@ -3265,20 +3380,6 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
     // Get prompt text
     juce::String promptText = prompt.getText();
     
-    // Validate: at least ONE input required (video OR text)
-    // For T2A mode: text-only is OK
-    // For V2A mode: will check video availability via PTSL
-    if (isT2AMode && promptText.isEmpty())
-    {
-        juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::WarningIcon,
-            "No Input Available",
-            "Please provide a text prompt for sound search.",
-            "OK"
-        );
-        return;
-    }
-    
     // Store prompt for use after PTSL completes
     currentPrompt = promptText;
     
@@ -3286,25 +3387,17 @@ void PtV2AEditor::handleRecommendSoundsButtonClicked()
     actionButton.setEnabled (false);
     actionButton.setButtonText ("Searching...");
     
-    // For V2A mode: start async PTSL workflow (same as render button)
-    // For T2A mode: trigger search immediately with text-only
-    if (!isT2AMode)
-    {
-        juce::Logger::writeToLog ("V2A mode: Starting async PTSL workflow...");
-        
-        // Start PTSL timeline selection read (non-blocking)
-        currentAsyncState = AsyncState::ReadingTimelineForSoundSearch;
-        startTimer (TIMER_INTERVAL_MS);
-        startTimelineSelectionRead();
-    }
-    else
-    {
-        juce::Logger::writeToLog ("T2A mode: Triggering sound search with text-only...");
-        
-        // T2A mode: Search without video (text-only)
-        // Pass empty string for video path, only use prompt
-        triggerSoundSearch ("", promptText, "", 0.0f, 0.0f, -1.0f, -1.0f, false);
-    }
+    // IMPORTANT: Sound Search always tries to get video from Pro Tools via PTSL first
+    // Then falls back to text-only if no video is available
+    // This is DIFFERENT from Audio Generation which respects V2A/T2A toggle
+    
+    juce::Logger::writeToLog ("Starting async PTSL workflow for sound search...");
+    juce::Logger::writeToLog ("Will use video if available, otherwise text-only search");
+    
+    // Start PTSL timeline selection read (non-blocking)
+    currentAsyncState = AsyncState::ReadingTimelineForSoundSearch;
+    startTimer (TIMER_INTERVAL_MS);
+    startTimelineSelectionRead();
 }
 
 //==============================================================================

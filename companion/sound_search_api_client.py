@@ -65,6 +65,7 @@ from cli.error_handler import safe_action_wrapper
 from video import (
     trim_and_maybe_downscale_video,
     validate_video_file,
+    get_video_duration,
 )
 from ptsl_integration import (
     timecode_to_seconds,
@@ -182,9 +183,43 @@ def action_search(args):
             log_debug(f"=== DEBUG SOUND_SEARCH: {trim_result['original_size_mb']:.1f}MB → {trim_result['final_size_mb']:.1f}MB ===")
         
         else:
-            # No trimming needed, but may need downscaling for large untrimmed videos
-            log_debug(f"=== DEBUG SOUND_SEARCH: No trimming needed, video will be sent as-is ===")
-            # Note: downscaling will happen in api/sound_search_client.py for untrimmed videos
+            # No trimming parameters provided - process full video
+            # Use trim_and_maybe_downscale_video with full duration to match audio generation workflow
+            # This ensures consistent >2MB downscaling logic
+            log_debug(f"=== DEBUG SOUND_SEARCH: No trimming parameters, processing full video ===")
+            
+            duration_result = get_video_duration(video_path)
+            if not duration_result['success']:
+                log_debug(f"=== DEBUG SOUND_SEARCH: Could not get video duration: {duration_result.get('error')} ===")
+                return {
+                    "status": "error",
+                    "message": f"Could not determine video duration: {duration_result.get('error')}"
+                }
+            
+            video_duration = duration_result['duration']
+            log_debug(f"=== DEBUG SOUND_SEARCH: Video duration: {video_duration:.2f}s ===")
+            
+            # "Trim" from 0 to end (effectively only downscales if >2MB)
+            trim_result = trim_and_maybe_downscale_video(
+                video_path=video_path,
+                start_seconds=0,
+                end_seconds=video_duration
+            )
+            
+            if not trim_result['success']:
+                log_debug(f"=== DEBUG SOUND_SEARCH: Processing FAILED: {trim_result.get('error')} ===")
+                return {
+                    "status": "error",
+                    "message": f"Video processing failed: {trim_result.get('error')}"
+                }
+            
+            video_path = trim_result['output_path']
+            log_debug(f"=== DEBUG SOUND_SEARCH: Processed video: {Path(video_path).name} ===")
+            log_debug(f"=== DEBUG SOUND_SEARCH: {trim_result['original_size_mb']:.1f}MB → {trim_result['final_size_mb']:.1f}MB ===" )
+            if trim_result['downscaled']:
+                log_debug(f"=== DEBUG SOUND_SEARCH: Video was downscaled (>{VIDEO_DOWNSCALE_THRESHOLD_MB}MB) ===")
+            else:
+                log_debug(f"=== DEBUG SOUND_SEARCH: Video was not downscaled (<={VIDEO_DOWNSCALE_THRESHOLD_MB}MB) ===")
         
         log_debug(f"=== DEBUG SOUND_SEARCH: Final video for search: {video_path} ===")
     

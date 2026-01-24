@@ -19,6 +19,7 @@ Requirements:
 """
 
 from ptsl import open_engine
+import ptsl.PTSL_pb2 as pt
 
 def main():
     print("=" * 80)
@@ -29,7 +30,10 @@ def main():
     try:
         # Connect to Pro Tools via PTSL
         print("Connecting to Pro Tools...")
-        with open_engine() as engine:
+        with open_engine(
+            company_name="Master Thesis",
+            application_name="Memory Location Extractor"
+        ) as engine:
             print(f"✓ Connected to Pro Tools")
             print(f"✓ Session: {engine.session_name()}")
             print()
@@ -59,8 +63,11 @@ def main():
                 start_time = loc.start_time
                 end_time = loc.end_time
                 color_index = loc.color_index
+                location = pt.MarkerLocation.Name(loc.location) if loc.location else "MLC_MainRuler"
+                track_name = loc.track_name if loc.track_name else ""
                 
-                print(f'    ("{name}", "{start_time}", "{end_time}", {color_index}),')
+                # Format as Python tuple (name, start, end, color, location, track)
+                print(f'    ("{name}", "{start_time}", "{end_time}", {color_index}, "{location}", "{track_name}"),')
             
             print("]")
             print()
