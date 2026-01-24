@@ -42,19 +42,23 @@ from cli.error_handler import safe_action_wrapper
 # Format: (name, start_time, end_time, color_index, location, track_name)
 # Use extract_memory_locations.py to get these values from your test session
 # NOTE: Positions must be unique - Pro Tools doesn't allow multiple markers at same position
+# TEST: Using MarkerLocation_NamedRuler with track_name to specify ruler names (DIA, FX, MX, etc.)
 MEMORY_LOCATIONS = [
-    ("DIA", "0", "0", 7, "MLC_MainRuler", ""),
-    ("Foley", "0", "0", 7, "MLC_MainRuler", ""),
-    ("BG", "0", "0", 7, "MLC_MainRuler", ""),
-    ("FX", "0", "0", 7, "MLC_MainRuler", ""),
-    ("MX", "0", "0", 7, "MLC_MainRuler", ""),
-    ("Master", "0", "0", 7, "MLC_MainRuler", ""),
-    ("FFOA", "4774000", "4774000", 16, "MLC_MainRuler", ""),
-    ("Location 85", "6882000", "6882000", 13, "MLC_MainRuler", ""),
-    ("Location 86", "6636000", "6636000", 13, "MLC_MainRuler", ""),
-    ("Credits", "16286000", "16286000", 16, "MLC_MainRuler", ""),
-    ("LFOA", "19680000", "19680000", 16, "MLC_MainRuler", ""),
+    ("Location Indoors", "6366000", "6366000", 12, "MarkerLocation_NamedRuler", "Locations"),
+    ("Foot Tapping", "6366000", "6366000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Keyboard clicking", "6616000", "6616000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Computer Beep (Error)", "7080000", "7080000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Computer Shutdown (Error 3)", "7232000", "7232000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Chair rolling", "7596000", "7596000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Hands drop to knees", "7774000", "7774000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Location Outdoors - Wide", "7872000", "7872000", 12, "MarkerLocation_NamedRuler", "Locations"),
+    ("Footsteps", "7872000", "7872000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Location Outdoors - Close", "8106000", "8106000", 12, "MarkerLocation_NamedRuler", "Locations"),
+    ("Footsteps", "8106000", "8106000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Sitting down", "8196000", "8196000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
+    ("Computer Beep (Error 2)", "7150000", "7150000", 8, "MarkerLocation_NamedRuler", "Foley and SFX"),
 ]
+
 
 # Timing configuration
 TOTAL_DURATION = 13  # Total fake progress duration in seconds

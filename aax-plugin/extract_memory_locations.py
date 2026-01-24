@@ -63,7 +63,9 @@ def main():
                 start_time = loc.start_time
                 end_time = loc.end_time
                 color_index = loc.color_index
-                location = pt.MarkerLocation.Name(loc.location) if loc.location else "MLC_MainRuler"
+                # Extract location enum - convert to string name for Python code
+                location = pt.MarkerLocation.Name(loc.location)
+                # Track name contains ruler name for MarkerLocation_NamedRuler (e.g. "DIA", "FX", "MX")
                 track_name = loc.track_name if loc.track_name else ""
                 
                 # Format as Python tuple (name, start, end, color, location, track)

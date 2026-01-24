@@ -455,6 +455,14 @@ private:
     void handleClipBoundsResult (const juce::String& output);
     
     /**
+     * Handle clip bounds result for Sound Search workflow.
+     * Parses JSON output with clip boundaries and triggers sound search.
+     * 
+     * @param output Raw JSON output from Python get_clip_bounds action
+     */
+    void handleClipBoundsForSoundSearchResult (const juce::String& output);
+    
+    /**
      * Get source video file duration via FFprobe
      * @param videoPath Path to video file
      * @return Duration in seconds, or 0.0f if failed
@@ -517,17 +525,18 @@ private:
     /** Current async operation state */
     enum class AsyncState
     {
-        Idle,                           // No operation in progress
-        ReadingTimeline,                // Reading timeline selection via PTSL (for audio generation)
-        ReadingTimelineForSoundSearch,  // Reading timeline selection via PTSL (for sound search)
-        ReadingTimelineForSoundImport,  // Reading timeline selection via PTSL (before sound import)
-        ReadingClipBounds,              // Reading clip boundaries via PTSL (for auto-trim detection)
-        GeneratingAudio,                // Python generating audio (polling for output file)
-        SearchingSounds,                // Python searching sounds (polling for JSON output)
-        DownloadingSingleSound,         // Python downloading single sound (polling for JSON output)
-        ImportingAudio,                 // Importing generated audio to Pro Tools via PTSL
-        ImportingSoundFX,               // Importing sound library audio to Pro Tools via PTSL
-        AutoSpottingAnalysis            // Auto Spotting wizard: fake progress + memory location creation
+        Idle,                              // No operation in progress
+        ReadingTimeline,                   // Reading timeline selection via PTSL (for audio generation)
+        ReadingTimelineForSoundSearch,     // Reading timeline selection via PTSL (for sound search)
+        ReadingTimelineForSoundImport,     // Reading timeline selection via PTSL (before sound import)
+        ReadingClipBounds,                 // Reading clip boundaries via PTSL (for audio generation)
+        ReadingClipBoundsForSoundSearch,   // Reading clip boundaries via PTSL (for sound search)
+        GeneratingAudio,                   // Python generating audio (polling for output file)
+        SearchingSounds,                   // Python searching sounds (polling for JSON output)
+        DownloadingSingleSound,            // Python downloading single sound (polling for JSON output)
+        ImportingAudio,                    // Importing generated audio to Pro Tools via PTSL
+        ImportingSoundFX,                  // Importing sound library audio to Pro Tools via PTSL
+        AutoSpottingAnalysis               // Auto Spotting wizard: fake progress + memory location creation
     };
     
     AsyncState currentAsyncState = AsyncState::Idle;

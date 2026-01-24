@@ -935,20 +935,30 @@ void PtV2AEditor::timerCallback()
                 return;
             }
             
-            // Trigger sound search with video + prompt
-            // Pass clip bounds for video trimming (prevents sending large videos)
-            // Auto-detect always enabled: clipStartSeconds/clipEndSeconds are set by handleClipBoundsResult()
-            // If clip bounds are valid (>= 0), they will be used for trimming
-            // Button will be re-enabled after search completes in SearchingSounds state
+            // If video is available, read clip bounds first (same workflow as Audio Generation)
+            if (videoPath.isNotEmpty())
+            {
+                juce::Logger::writeToLog ("Starting clip bounds read for sound search...");
+                // Store video path for use after clip bounds read
+                currentVideoPath = videoPath;
+                currentAsyncState = AsyncState::ReadingClipBoundsForSoundSearch;
+                asyncOperationStartTime = juce::Time::getCurrentTime();
+                startTimer (TIMER_INTERVAL_MS);
+                startClipBoundsRead (videoPath);
+                return;
+            }
+            
+            // Text-only search (no video) - trigger immediately with no clip bounds
+            juce::Logger::writeToLog ("Text-only search - no clip bounds needed");
             triggerSoundSearch (
-                videoPath, 
+                "",                              // No video
                 currentPrompt,
-                "",                              // Video offset (removed from UI)
-                0.0f,                            // Timeline start (not used for sound search button)
-                0.0f,                            // Timeline end (not used for sound search button)
-                clipStartSeconds,                // Clip start from auto-detection (or -1.0f if not detected)
-                clipEndSeconds,                  // Clip end from auto-detection (or -1.0f if not detected)
-                clipStartSeconds >= 0.0f         // Auto-detect succeeded if clipStartSeconds is valid
+                "",                              // Video offset
+                0.0f,                            // Timeline start
+                0.0f,                            // Timeline end
+                -1.0f,                           // No clip start
+                -1.0f,                           // No clip end
+                false                            // No auto-detect
             );
             
             break;
@@ -1089,6 +1099,54 @@ void PtV2AEditor::timerCallback()
             
             // Pass output to handler for parsing
             handleClipBoundsResult (output);
+            break;
+        }
+        
+        case AsyncState::ReadingClipBoundsForSoundSearch:
+        {
+            // Same as ReadingClipBounds but for Sound Search workflow
+            if (!ptslProcess)
+            {
+                stopTimer();
+                currentAsyncState = AsyncState::Idle;
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Recommend Sounds");
+                return;
+            }
+            
+            // Check for timeout
+            if (elapsed.inMilliseconds() > PTSL_TIMEOUT_MS)
+            {
+                juce::Logger::writeToLog ("ERROR: Clip bounds read for sound search timed out after " + 
+                                          juce::String (PTSL_TIMEOUT_MS) + "ms");
+                
+                stopTimer();
+                ptslProcess->kill();
+                ptslProcess.reset();
+                currentAsyncState = AsyncState::Idle;
+                
+                actionButton.setEnabled (true);
+                actionButton.setButtonText ("Recommend Sounds");
+                return;
+            }
+            
+            // Check if process is still running
+            if (ptslProcess->isRunning())
+            {
+                return;  // Keep waiting
+            }
+            
+            // Process finished! Read output
+            juce::Logger::writeToLog ("Clip bounds read for sound search finished after " + 
+                                      juce::String (elapsed.inMilliseconds()) + "ms");
+            
+            auto output = ptslProcess->readAllProcessOutput();
+            ptslProcess.reset();
+            stopTimer();
+            currentAsyncState = AsyncState::Idle;
+            
+            // Pass output to handler for parsing (Sound Search variant)
+            handleClipBoundsForSoundSearchResult (output);
             break;
         }
         
@@ -1839,6 +1897,7 @@ void PtV2AEditor::handleTimelineSelectionResult (const juce::String& output)
         
         // Start async clip bounds reading
         // The timer will continue running, and handleClipBoundsResult() will proceed to generation
+        currentAsyncState = AsyncState::ReadingClipBounds;
         startClipBoundsRead (videoPath);
         return;  // Exit here, will continue in handleClipBoundsResult()
         
@@ -2107,8 +2166,8 @@ void PtV2AEditor::startClipBoundsRead (const juce::String& videoPath)
         return;
     }
     
-    // Update state and reset timer
-    currentAsyncState = AsyncState::ReadingClipBounds;
+    // State should already be set by caller (ReadingClipBounds or ReadingClipBoundsForSoundSearch)
+    // Reset timer for this operation
     asyncOperationStartTime = juce::Time::getCurrentTime();
     juce::Logger::writeToLog ("Reading clip boundaries... (async)");
     
@@ -2188,6 +2247,91 @@ void PtV2AEditor::handleClipBoundsResult (const juce::String& output)
     // Start audio generation (will use clipStartSeconds and clipEndSeconds)
     startAudioGeneration (currentVideoPath, currentPrompt); 
     actionButton.setButtonText ("Generating Audio...");
+}
+
+//==============================================================================
+// Handle Clip Bounds Result (Sound Search Variant)
+//==============================================================================
+
+void PtV2AEditor::handleClipBoundsForSoundSearchResult (const juce::String& output)
+{
+    // Parse JSON output with clip boundaries for Sound Search workflow
+    juce::Logger::writeToLog ("=== Handling Clip Bounds Result (Sound Search) ===");
+    juce::Logger::writeToLog ("Output: " + output);
+    
+    // Extract JSON from output (last JSON line)
+    auto lines = juce::StringArray::fromLines (output);
+    juce::String jsonOutput;
+    for (const auto& line : lines)
+    {
+        if (line.trimStart().startsWith ("{"))
+        {
+            jsonOutput = line.trim();
+        }
+    }
+    
+    if (jsonOutput.isEmpty())
+    {
+        juce::Logger::writeToLog ("ERROR: No JSON in clip bounds output");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Recommend Sounds");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    // Parse JSON
+    auto jsonResult = juce::JSON::parse (jsonOutput);
+    if (jsonResult.isVoid())
+    {
+        juce::Logger::writeToLog ("ERROR: Failed to parse clip bounds JSON");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Recommend Sounds");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    bool success = jsonResult.getProperty ("success", false);
+    if (!success)
+    {
+        juce::String error = jsonResult.getProperty ("error", "Unknown error");
+        juce::Logger::writeToLog ("ERROR: Clip bounds read failed: " + error);
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Recommend Sounds");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    // Extract clip boundaries
+    float clipStart = (float) jsonResult.getProperty ("start_seconds", -1.0);
+    float clipEnd = (float) jsonResult.getProperty ("end_seconds", -1.0);
+    
+    juce::Logger::writeToLog ("✅ Clip bounds read successfully for sound search");
+    juce::Logger::writeToLog ("  Start: " + juce::String (clipStart, 3) + "s");
+    juce::Logger::writeToLog ("  End: " + juce::String (clipEnd, 3) + "s");
+    
+    if (clipStart < 0.0f || clipEnd < 0.0f)
+    {
+        juce::Logger::writeToLog ("ERROR: Invalid clip bounds");
+        actionButton.setEnabled (true);
+        actionButton.setButtonText ("Recommend Sounds");
+        currentAsyncState = AsyncState::Idle;
+        return;
+    }
+    
+    // Trigger sound search with clip bounds
+    currentAsyncState = AsyncState::Idle;  // Reset before starting search
+    juce::Logger::writeToLog ("Proceeding to sound search with clip bounds");
+    
+    triggerSoundSearch (
+        currentVideoPath,
+        currentPrompt,
+        "",              // Video offset
+        0.0f,            // Timeline start (not used)
+        0.0f,            // Timeline end (not used)
+        clipStart,       // Clip start from PTSL
+        clipEnd,         // Clip end from PTSL
+        true             // Auto-detect enabled
+    );
 }
 
 //==============================================================================
