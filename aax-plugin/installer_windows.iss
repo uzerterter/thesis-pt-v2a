@@ -28,9 +28,8 @@ SolidCompression=yes
 MinVersion=10.0
 ArchitecturesInstallIn64BitMode=x64
 
-; Admin rights - lowest elevates if needed, allows user installation
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; Admin rights required for system-wide AAX plugin installation
+PrivilegesRequired=admin
 
 ; License and info files (optional - add if you have them)
 ; LicenseFile=LICENSE.txt
@@ -42,27 +41,19 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 
 [Files]
 ; Copy the entire signed AAX plugin folder from staging directory
-; System-wide if admin, user-specific if not
+; Installs system-wide to Pro Tools common plugin directory
 Source: "installer_staging\PTV2A.aaxplugin\*"; \
-  DestDir: "{code:GetInstallDir}\PTV2A.aaxplugin"; \
+  DestDir: "{commoncf}\Avid\Audio\Plug-Ins\PTV2A.aaxplugin"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
 ; Ensure plugin directory exists with proper permissions
-Name: "{code:GetInstallDir}\PTV2A.aaxplugin"; Permissions: everyone-readexec
+Name: "{commoncf}\Avid\Audio\Plug-Ins\PTV2A.aaxplugin"; Permissions: everyone-readexec
 
 [Icons]
 ; No Start Menu shortcuts needed (plugin only)
 
 [Code]
-function GetInstallDir(Param: String): String;
-begin
-  if IsAdmin then
-    Result := ExpandConstant('{commoncf}\Avid\Audio\Plug-Ins')
-  else
-    Result := ExpandConstant('{userappdata}\Avid\Audio\Plug-Ins');
-end;
-
 function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
