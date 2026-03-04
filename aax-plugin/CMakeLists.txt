@@ -74,7 +74,7 @@ juce_add_plugin(pt_v2a
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE # GUI doesn't capture keyboard
     
     # Resources Embedding - CRITICAL for embedded Python + FFmpeg
-    COPY_PLUGIN_AFTER_BUILD TRUE      # Enables automatic plugin installation after build
+    COPY_PLUGIN_AFTER_BUILD FALSE     # Disabled - installer handles deployment
     
     # Mac-specific: Universal Binary support
     OSX_ARCHITECTURES "arm64;x86_64"  # Build for both Apple Silicon and Intel
@@ -151,9 +151,19 @@ add_custom_command(TARGET pt_v2a_AAX PRE_BUILD
 # STEP 2: Copy Resources/ to plugin bundle (runs AFTER Python sync)
 add_custom_command(TARGET pt_v2a_AAX POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Copying Resources folder to plugin bundle..."
+    # Copy only python/ and txt files (exclude python-macos and python-macintel source dirs)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/Resources
-        $<TARGET_FILE_DIR:pt_v2a_AAX>/../Resources
+        ${CMAKE_CURRENT_SOURCE_DIR}/Resources/python
+        $<TARGET_FILE_DIR:pt_v2a_AAX>/../Resources/python
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/Resources/_embedded_python_here.txt
+        $<TARGET_FILE_DIR:pt_v2a_AAX>/../Resources/_embedded_python_here.txt
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/Resources/python_runtime_requirements.txt
+        $<TARGET_FILE_DIR:pt_v2a_AAX>/../Resources/python_runtime_requirements.txt
+    # Remove any accidentally copied source Python directories
+    COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:pt_v2a_AAX>/../Resources/python-macos
+    COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:pt_v2a_AAX>/../Resources/python-macintel
     COMMENT "Embedding Python runtime and scripts into plugin bundle"
     VERBATIM
 )
