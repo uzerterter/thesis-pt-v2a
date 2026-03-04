@@ -329,17 +329,13 @@ juce::String PtV2AProcessor::getConfiguredAPIUrl (const juce::String& service)
 {
     juce::Logger::writeToLog ("=== Loading API URL from config.json ===");
     
-    // Get config.json path from embedded Python resources
-    auto pluginFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    auto pluginDir = pluginFile.getParentDirectory();
-    auto contentsDir = pluginDir.getParentDirectory();
+    // Get config.json from user config directory (matches Python companion/api/config.py)
+    // macOS: ~/Library/PTV2A/config.json
+    // Windows: %APPDATA%/PTV2A/config.json
+    auto userConfigDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                                    .getChildFile("PTV2A");
     
-    auto configFile = contentsDir.getChildFile("Resources")
-                                 .getChildFile("python")
-                                 .getChildFile("Lib")
-                                 .getChildFile("site-packages")
-                                 .getChildFile("api")
-                                 .getChildFile("config.json");
+    auto configFile = userConfigDir.getChildFile("config.json");
     
     juce::Logger::writeToLog ("Config path: " + configFile.getFullPathName());
     
@@ -618,15 +614,13 @@ juce::String PtV2AProcessor::generateAudioFromVideo (
     // NOTE: We no longer generate a specific filename here
     // The server will generate a descriptive name: {prompt_snippet}_{seed}_{model}_{timestamp}.wav
     // Python client will save using the server-provided filename
-    // We just specify the output directory via --temp flag (client will use temp dir)
-    
-    // Don't pass --output (client will auto-generate path in temp dir with server name)
-    // The client will print the actual output path to stdout, which we'll read
+    // We pass --output with the directory path (client will use this as base for server-generated filename)
     
     commandArray.add ("--output-format");
     commandArray.add ("wav");  // Pro Tools compatible
     
-    commandArray.add ("--temp");  // Use temp directory (pt_v2a_outputs)
+    commandArray.add ("--output");
+    commandArray.add (outputsDir.getFullPathName());  // Explicit output directory
     
     // Add full precision flag if enabled
     if (fullPrecision)
@@ -787,7 +781,8 @@ juce::String PtV2AProcessor::generateAudioTextOnly (
     commandArray.add ("--output-format");
     commandArray.add ("wav");
     
-    commandArray.add ("--temp");  // Use temp directory
+    commandArray.add ("--output");
+    commandArray.add (outputsDir.getFullPathName());  // Explicit output directory
     
     commandArray.add ("--verbose");  // Enable verbose output for debugging
     

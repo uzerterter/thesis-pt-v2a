@@ -269,9 +269,26 @@ def generate_audio(
         
         # Determine output path
         if output_path:
-            final_output_path = Path(output_path)
-            # Ensure output directory exists
-            final_output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path_obj = Path(output_path)
+            
+            # Check if output_path is a directory or file path
+            if output_path_obj.is_dir() or (not output_path_obj.exists() and not output_path_obj.suffix):
+                # It's a directory (or looks like one) - append server filename
+                output_dir = output_path_obj
+                output_dir.mkdir(parents=True, exist_ok=True)
+                
+                if server_filename:
+                    final_output_path = output_dir / server_filename
+                else:
+                    timestamp = int(time.time())
+                    file_ext = output_format.lower()
+                    output_filename = f"generated_audio_{timestamp}_{seed}.{file_ext}"
+                    final_output_path = output_dir / output_filename
+            else:
+                # It's a file path - use as-is
+                final_output_path = output_path_obj
+                # Ensure output directory exists
+                final_output_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             # Auto-generate output path, using server-provided filename if available
             if use_temp:
