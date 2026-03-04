@@ -32,6 +32,8 @@ echo ""
 echo "Step 2/5: Cleaning previous builds..."
 sudo rm -rf "/Library/Application Support/Avid/Audio/Plug-Ins/PTV2A.aaxplugin"
 rm -rf ~/Library/Application\ Support/Avid/Audio/Plug-Ins/PTV2A.aaxplugin
+# Also remove old signed plugin (wraptool can't delete root-owned files)
+sudo rm -rf build/pt_v2a_artefacts/Release/AAX/PTV2A.aaxplugin
 echo "✓ Removed previous plugin installations"
 
 # 3. Build Release

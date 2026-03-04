@@ -105,10 +105,9 @@ cat > "$STAGING_DIR/welcome.html" << EOF
     <p>This installer will install the PTV2A AAX plugin for Pro Tools.</p>
     <p><strong>Architecture:</strong> $ARCH_DISPLAY</p>
     <p>The plugin uses AI to generate audio from video content and provides sound effect search capabilities.</p>
-    <p><strong>System Requirements:</strong></p>
+    <p><strong>Tested on:</strong></p>
     <ul>
-        <li>Pro Tools 2023.x or later</li>
-        <li>macOS 11.0 (Big Sur) or later</li>
+        <li>Pro Tools 2025.06 and 2025.12</li>
         <li>$([ "$ARCH" == "intel" ] && echo "Intel Mac (x86_64)" || echo "Apple Silicon Mac (arm64)")</li>
     </ul>
 </body>
@@ -130,7 +129,7 @@ cat > "$STAGING_DIR/conclusion.html" << EOF
     <h1>Installation Complete</h1>
     <p>PTV2A has been successfully installed.</p>
     <p>The plugin is now available in Pro Tools under:</p>
-    <p><strong>Plug-Ins → Utility → PTV2A</strong></p>
+    <p><strong>Audiosuite → Other → PTV2A</strong></p>
     <p>Please restart Pro Tools if it is currently running.</p>
 </body>
 </html>
