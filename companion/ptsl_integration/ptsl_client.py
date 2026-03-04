@@ -155,7 +155,7 @@ def import_audio_to_pro_tools(
     if file_ext not in SUPPORTED_EXTENSIONS:
         print(f"ERROR: Unsupported file format: {file_ext}", file=sys.stderr)
         print(f"       Pro Tools PTSL Import only supports: {', '.join(sorted(SUPPORTED_EXTENSIONS))}", file=sys.stderr)
-        if file_ext in {'.mp4', '.mov', '.avi', '.mkv'}:
+        if file_ext in {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.webm', '.flv', '.wmv', '.f4v', '.mxf', '.m2ts', '.mts', '.ts', '.mpg', '.mpeg', '.vob', '.ogv', '.3gp', '.3g2'}:
             print(f"       For video files ({file_ext}), extract audio first using:", file=sys.stderr)
             print(f"       ffmpeg -i \"{actual_path.name}\" -vn -acodec pcm_s16le output.wav", file=sys.stderr)
         return False

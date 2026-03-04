@@ -10,7 +10,18 @@ from pathlib import Path
 from typing import Dict
 
 # Supported video formats for Pro Tools integration
-SUPPORTED_VIDEO_FORMATS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
+SUPPORTED_VIDEO_FORMATS = {
+    # Common container formats
+    '.mp4', '.mov', '.avi', '.mkv', '.m4v', '.webm', '.flv', '.wmv', '.f4v',
+    # Professional / broadcast
+    '.mxf', '.m2ts', '.mts', '.ts',
+    # MPEG legacy
+    '.mpg', '.mpeg',
+    # Optical media
+    '.vob',
+    # Open / mobile
+    '.ogv', '.3gp', '.3g2',
+}
 
 
 def validate_video_duration(

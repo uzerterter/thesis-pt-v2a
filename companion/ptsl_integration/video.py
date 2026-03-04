@@ -84,7 +84,18 @@ def get_video_file_from_protools(
                 # Check if this is a video file (by extension)
                 import os
                 file_ext = os.path.splitext(file_path)[1].lower()
-                video_extensions = ['.mov', '.mp4', '.avi', '.mkv', '.m4v', '.webm', '.flv', '.wmv']
+                video_extensions = [
+                    # Common container formats
+                    '.mp4', '.mov', '.avi', '.mkv', '.m4v', '.webm', '.flv', '.wmv', '.f4v',
+                    # Professional / broadcast
+                    '.mxf', '.m2ts', '.mts', '.ts',
+                    # MPEG legacy
+                    '.mpg', '.mpeg',
+                    # Optical media
+                    '.vob',
+                    # Open / mobile
+                    '.ogv', '.3gp', '.3g2',
+                ]
                 
                 if file_ext in video_extensions:
                     video_clips_selected.append(file_path)

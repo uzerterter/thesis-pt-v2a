@@ -334,7 +334,18 @@ def get_clip_info_for_selected_video(engine) -> Optional[Dict]:
         for loc in file_locations:
             # Check file extension to identify video files
             path_lower = loc.path.lower()
-            if path_lower.endswith(('.mp4', '.mov', '.avi', '.mkv', '.m4v', '.mxf')):
+            if path_lower.endswith((
+                # Common container formats
+                '.mp4', '.mov', '.avi', '.mkv', '.m4v', '.webm', '.flv', '.wmv', '.f4v',
+                # Professional / broadcast
+                '.mxf', '.m2ts', '.mts', '.ts',
+                # MPEG legacy
+                '.mpg', '.mpeg',
+                # Optical media
+                '.vob',
+                # Open / mobile
+                '.ogv', '.3gp', '.3g2',
+            )):
                 video_location = loc
                 print(f"[CLIP INFO] Found video file: {loc.path}", file=sys.stderr)
                 break

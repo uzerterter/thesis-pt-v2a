@@ -127,14 +127,30 @@ def get_cf_headers() -> Dict[str, str]:
 
 # Supported video formats for Pro Tools integration
 SUPPORTED_VIDEO_FORMATS = {
+    # Common container formats
     ".mp4",
     ".mov",
     ".avi",
     ".mkv",
+    ".m4v",
     ".webm",
     ".flv",
     ".wmv",
-    ".m4v",
+    ".f4v",
+    # Professional / broadcast
+    ".mxf",
+    ".m2ts",
+    ".mts",
+    ".ts",
+    # MPEG legacy
+    ".mpg",
+    ".mpeg",
+    # Optical media
+    ".vob",
+    # Open / mobile
+    ".ogv",
+    ".3gp",
+    ".3g2",
 }
 
 # Common generation parameters
