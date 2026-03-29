@@ -14,6 +14,6 @@
       "api_url_cloudflared": "https://sounds.linwig.de"
     }
   },
-  "cf_access_client_id": "c8b837769349ee7caf35203cf3d34ea8.access",
-  "cf_access_client_secret": "9e9dd74fac63a5686434a2300b4cbd44a1221e03bf32f46befe3056bb869ce4f"
+  "cf_access_client_id": "",
+  "cf_access_client_secret": ""
 }

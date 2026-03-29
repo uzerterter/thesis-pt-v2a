@@ -41,7 +41,7 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
             "api_url_cloudflared": "https://sounds.linwig.de",
         },
     },
-    "cf_access_client_id": "c8b837769349ee7caf35203cf3d34ea8.access",
+    "cf_access_client_id": "",
     "cf_access_client_secret": "",
 }
 
@@ -56,7 +56,7 @@ def _load_config() -> Dict[str, Any]:
 
     cfg = CONFIG_DEFAULTS.copy()
     
-    # Create default config file on first run (with Client ID pre-filled)
+    # Create default config file on first run
     if not _CONFIG_PATH.exists():
         try:
             _CONFIG_PATH.write_text(json.dumps(CONFIG_DEFAULTS, indent=2))
