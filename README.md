@@ -7,13 +7,13 @@ The system combines AI-based audio generation, semantic sound recommendation, an
 ## Demo
 
 ### 1. Audio Generation
-[Video / GIF here]
+https://github.com/user-attachments/assets/cbe2bbf0-ac58-4ff3-87b1-0d0e45d20e33
 
 ### 2. Sound Recommendation
-[Video / GIF here]
+https://github.com/user-attachments/assets/05d01e95-872f-4549-a6ed-f4d72c6ab3d3
 
 ### 3. Spotting Support
-[Video / GIF here]
+https://github.com/user-attachments/assets/4fcb9db9-5133-450c-b541-a01176fe2abb
 
 
 ## What This Project Does
@@ -26,9 +26,8 @@ Generates sound for a selected scene segment from video and optional text prompt
 2. **Sound Recommendation**   
 Retrieves candidate sounds from a searchable library based on video, text, or hybrid queries.
 
-3. **Spotting Support**  
+4. **Spotting Support**  
 Creates marker-based event suggestions to support spotting in predefined study scenes used for prototype evaluation (Wizard-of-Oz).
-
 
 ## Repository Structure
 
