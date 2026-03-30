@@ -98,11 +98,3 @@ It is not intended as a production-ready tool.
 This project integrates with the **BBC Sound Effects Archive** for research-only search/retrieval. **No BBC audio or metadata are included in this repository**. Users must obtain any BBC content under the BBC’s licensing terms:
 
 - Archive: https://sound-effects.bbcrewind.co.uk/
-
-## Citation
-
-If you reference this project, please cite the associated master’s thesis.
-
-## License
-
-See the repository license and the respective third-party component licenses.
