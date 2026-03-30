@@ -26,7 +26,7 @@ Generates sound for a selected scene segment from video and optional text prompt
 2. **Sound Recommendation**   
 Retrieves candidate sounds from a searchable library based on video, text, or hybrid queries.
 
-4. **Spotting Support**  
+3. **Spotting Support**  
 Creates marker-based event suggestions to support spotting in predefined study scenes used for prototype evaluation (Wizard-of-Oz).
 
 ## Repository Structure
@@ -97,3 +97,7 @@ It is not intended as a production-ready tool.
 This project integrates with the **BBC Sound Effects Archive** for research-only search/retrieval. **No BBC audio or metadata are included in this repository**. Users must obtain any BBC content under the BBC’s licensing terms:
 
 - Archive: https://sound-effects.bbcrewind.co.uk/
+- License: https://sound-effects.bbcrewind.co.uk/licensing
+
+## Author
+Ludwig Degenhardt — Master's Thesis, LMU Munich, 2026
