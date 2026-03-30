@@ -91,9 +91,9 @@ This project integrates with the **BBC Sound Effects Archive** for research-only
 
 ## Upstream Models & Repositories
 
-- MMAudio (video-conditioned audio generation): https://github.com/PKU-YuanGroup/MMAudio
-- HunyuanVideo-Foley: https://github.com/Tencent/HunyuanVideo-Foley
-- X-CLIP (retrieval backbone): https://github.com/microsoft/X-CLIP
+- MMAudio (video-conditioned audio generation): [https://github.com/PKU-YuanGroup/MMAudio](https://github.com/hkchengrex/MMAudio)
+- HunyuanVideo-Foley: [https://github.com/Tencent/HunyuanVideo-Foley](https://github.com/Tencent-Hunyuan/HunyuanVideo-Foley)x-clip 
+- X-CLIP (retrieval backbone): [https://github.com/microsoft/X-CLIP](https://huggingface.co/microsoft/xclip-base-patch32)
 
 ## Citation
 
