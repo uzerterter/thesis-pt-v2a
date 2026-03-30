@@ -66,7 +66,7 @@ thesis-pt-v2a/
 
 ## Architecture at a Glance
 
-1. User selects a video range in Pro Tools.
+1. User selects a video clip in Pro Tools (+ optional text input in the plugin).
 2. AAX plugin calls Python helper scripts bundled in plugin resources.
 3. Helper scripts communicate with one or more backend APIs.
 4. Generated audio or search results are returned.
@@ -89,6 +89,12 @@ This project integrates with the **BBC Sound Effects Archive** for research-only
 
 - Archive: https://sound-effects.bbcrewind.co.uk/
 - Licence: https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/
+
+## Upstream Models & Repositories
+
+- MMAudio (video-conditioned audio generation): https://github.com/PKU-YuanGroup/MMAudio
+- HunyuanVideo-Foley: https://github.com/Tencent/HunyuanVideo-Foley
+- X-CLIP (retrieval backbone): https://github.com/microsoft/X-CLIP
 
 ## Citation
 
