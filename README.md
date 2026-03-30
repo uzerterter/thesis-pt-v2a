@@ -1,6 +1,7 @@
 # thesis-pt-v2a
 
-Research prototype developed as part of a master’s thesis on AI support for professional film sound design.
+Research prototype developed as part of the master’s thesis "AI for Sound Design: Integrating Scene-Aware Sound
+Generation & Retrieval in Film Post-Production".
 The system combines AI-based audio generation, semantic sound recommendation, and spotting assistance in a Pro Tools-native AAX plugin workflow.
 
 ## What This Project Does
