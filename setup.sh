@@ -154,6 +154,22 @@ else
 fi
 
 # ==============================================================================
+# Cleanup: Remove any leftover named containers from the env creation steps.
+#
+# 'docker compose run' can leave named containers behind when container_name is
+# set in the compose file. These must be removed before 'docker compose up' can
+# create the actual service containers.
+#
+# NOTE: The conda environments (mmaudio, hyvf) are stored in ../conda-envs/ on
+# the HOST filesystem via the volume mount — removing containers does NOT delete
+# them. They persist across container removals and Docker image rebuilds.
+# ==============================================================================
+echo ""
+echo "── Cleanup: Removing setup containers (envs are safe on host disk)"
+docker rm -f gen-mmaudio-api gen-hyvf-api 2>/dev/null || true
+echo "   ✓ Done"
+
+# ==============================================================================
 # Done
 # ==============================================================================
 echo ""

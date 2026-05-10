@@ -36,6 +36,7 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 The setup script will create the following layout relative to where `thesis-pt-v2a/` lives:
 
 ```
+
 <parent>/
 ├── thesis-pt-v2a/               ← this repository
 │   ├── Dockerfile
@@ -128,7 +129,8 @@ docker compose -f docker-compose.generation.yml logs -f
 docker compose -f docker-compose.generation.yml logs -f mmaudio-api
 
 # Open a shell inside a running container (for debugging)
-docker exec -it mmaudio-api /bin/bash
+docker exec -it gen-mmaudio-api /bin/bash
+docker exec -it gen-hyvf-api /bin/bash
 
 # Rebuild the Docker image after Dockerfile changes
 docker compose -f docker-compose.generation.yml build

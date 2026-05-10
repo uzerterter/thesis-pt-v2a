@@ -17,7 +17,7 @@ services:
   mmaudio-api:
     build: .
     image: generation-api:latest
-    container_name: mmaudio-api
+    container_name: gen-mmaudio-api
     restart: unless-stopped
     working_dir: /workspace/thesis-pt-v2a/standalone-API
     volumes:
@@ -49,7 +49,7 @@ services:
   hunyuanvideo-foley-api:
     build: .
     image: generation-api:latest
-    container_name: hunyuanvideo-foley-api
+    container_name: gen-hyvf-api
     restart: unless-stopped
     working_dir: /workspace/thesis-pt-v2a/hunyuanvideo-foley-API
     volumes:
