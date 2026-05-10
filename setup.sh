@@ -203,9 +203,30 @@ echo "── Step 6: Environment configuration"
 if [ -f "$SCRIPT_DIR/.env" ]; then
     echo "   ✓ .env already exists — skipping"
 else
-    cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+    # Copy .env.example → .env, auto-uncommenting the required fields
+    # so the user just replaces placeholder values (no '#' to remove)
+    sed 's/^# TUNNEL_TOKEN=/TUNNEL_TOKEN=/' "$SCRIPT_DIR/.env.example" | \
+        sed 's/^# DB_DUMP_URL=/DB_DUMP_URL=/' > "$SCRIPT_DIR/.env"
     echo "   ✓ Created .env from .env.example"
-    echo "   ℹ  Edit .env to set BBC_SOUNDS_DIR, DB_DUMP_URL, TUNNEL_TOKEN etc."
+    echo ""
+    echo "   ┌─────────────────────────────────────────────────────────────────┐"
+    echo "   │  ⚠️  REQUIRED: edit .env before the stack will work             │"
+    echo "   │                                                                 │"
+    echo "   │  TUNNEL_TOKEN  — Cloudflare tunnel token                        │"
+    echo "   │    Get it: Zero Trust → Networks → Tunnels                      │"
+    echo "   │            → your tunnel → Configure → Token (copy it)          │"
+    echo "   │    Set it:  TUNNEL_TOKEN=eyJ...                                 │"
+    echo "   │                                                                 │"
+    echo "   │  DB_DUMP_URL   — URL to the BBC Sound Archive database dump     │"
+    echo "   │    Get it: from the project maintainer (Google Drive or direct) │"
+    echo "   │    Set it:  DB_DUMP_URL=https://drive.google.com/file/d/...     │"
+    echo "   │                                                                 │"
+    echo "   │  BBC_SOUNDS_DIR (optional) — path to BBC .wav files             │"
+    echo "   │    Default: ../BBCSoundDownloader/sounds                        │"
+    echo "   └─────────────────────────────────────────────────────────────────┘"
+    echo ""
+    read -rp "   Press Enter to open .env in nano, or Ctrl+C to edit manually... "
+    nano "$SCRIPT_DIR/.env"
 fi
 
 # Source .env for subsequent steps (strip comments and empty lines)
