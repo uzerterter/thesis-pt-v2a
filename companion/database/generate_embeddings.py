@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://ludwig:thesis2025@localhost:5432/bbc_sounds"
+    "postgresql://ludwig:change_me@localhost:5432/bbc_sounds"
 )
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 32  # Process this many descriptions at once

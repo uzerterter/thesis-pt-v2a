@@ -53,7 +53,7 @@ Health check endpoint.
 
 ## Environment Variables
 
-- `DATABASE_URL`: PostgreSQL connection URL (default: `postgresql://ludwig:thesis2025@postgres:5432/bbc_sounds`)
+- `DATABASE_URL`: PostgreSQL connection URL (default: `postgresql://ludwig:change_me@postgres:5432/bbc_sounds`)
 - `BBC_SOUNDS_PATH`: Path to BBC sound files (default: `/sounds`)
 - `XCLIP_MODEL`: X-CLIP model name (default: `microsoft/xclip-base-patch32`)
 

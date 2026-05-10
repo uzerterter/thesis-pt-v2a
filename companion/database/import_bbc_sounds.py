@@ -11,6 +11,7 @@ import psycopg2
 from pathlib import Path
 from typing import Dict, Tuple
 import sys
+import os
 
 # Database connection parameters
 DB_CONFIG = {
@@ -18,7 +19,7 @@ DB_CONFIG = {
     'port': 5432,
     'database': 'bbc_sounds',
     'user': 'ludwig',
-    'password': 'thesis2025'
+    'password': os.getenv('BBC_DB_PASSWORD', 'change_me')
 }
 
 # Paths

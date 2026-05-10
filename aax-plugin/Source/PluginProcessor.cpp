@@ -1554,13 +1554,13 @@ juce::String PtV2AProcessor::getCloudflareClientId()
         defaultConfig->setProperty ("services", juce::var (services.get()));
         
         // Credentials
-        defaultConfig->setProperty ("cf_access_client_id", "c8b837769349ee7caf35203cf3d34ea8.access");
+        defaultConfig->setProperty ("cf_access_client_id", "");
         defaultConfig->setProperty ("cf_access_client_secret", "");
         
         auto jsonString = juce::JSON::toString (juce::var (defaultConfig.get()), true);
         configFile.replaceWithText (jsonString);
         
-        return "c8b837769349ee7caf35203cf3d34ea8.access";
+        return {};
     }
     
     auto json = juce::JSON::parse (configFile.loadFileAsString());

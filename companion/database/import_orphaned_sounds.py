@@ -13,6 +13,7 @@ The script will:
 
 import sys
 import wave
+import os
 from pathlib import Path
 from typing import Tuple, Optional
 import psycopg2
@@ -24,7 +25,7 @@ DB_CONFIG = {
     "port": 5432,  # Docker exposed port
     "database": "bbc_sounds",
     "user": "ludwig",
-    "password": "thesis2025"
+    "password": os.getenv("BBC_DB_PASSWORD", "change_me")
 }
 
 

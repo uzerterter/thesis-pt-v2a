@@ -10,6 +10,7 @@ and updates the database with correct paths.
 
 import sys
 import re
+import os
 from pathlib import Path
 import psycopg2
 
@@ -20,7 +21,7 @@ DB_CONFIG = {
     "port": 5432,
     "database": "bbc_sounds",
     "user": "ludwig",
-    "password": "thesis2025"
+    "password": os.getenv("BBC_DB_PASSWORD", "change_me")
 }
 
 

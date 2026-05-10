@@ -44,7 +44,7 @@ Host: localhost
 Port: 5432
 Database: bbc_sounds
 User: ludwig
-Password: thesis2025
+Password: <set-via-env-or-local-secret>
 ```
 
 ```python
@@ -55,6 +55,6 @@ conn = psycopg2.connect(
     port=5432,
     database="bbc_sounds",
     user="ludwig",
-    password="thesis2025"
+    password="<set-via-env-or-local-secret>"
 )
 ```

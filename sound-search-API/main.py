@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Configuration from environment
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://ludwig:thesis2025@postgres:5432/bbc_sounds"
+    "postgresql://ludwig:change_me@postgres:5432/bbc_sounds"
 )
 BBC_SOUNDS_PATH = Path(os.getenv("BBC_SOUNDS_PATH", "/sounds"))
 MODEL_NAME = os.getenv("XCLIP_MODEL", "microsoft/xclip-base-patch32-16-frames")
