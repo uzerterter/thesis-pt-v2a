@@ -1,31 +1,56 @@
 #!/bin/bash
 # ==============================================================================
-# setup.sh — Bootstrap script for thesis-pt-v2a generation backends
+# setup.sh — Script for thesis-pt-v2a
 #
-# Run this script from inside the thesis-pt-v2a/ directory:
-#   bash setup.sh
+# Usage:
+#   bash setup.sh --generation-only   — Generation APIs only (MMAudio + HunyuanVideo-Foley)
+#   bash setup.sh                     — Full stack (+ Sound Search API, PostgreSQL, Cloudflared)
 #
-# What this does:
-#   1. Creates the required directory structure in the parent directory
-#   2. Clones MMAudio and HunyuanVideo-Foley model repositories
-#   3. Builds the Docker image
-#   4. Creates the 'mmaudio' and 'hyvf' conda environments inside the container
-#   5. Downloads HunyuanVideo-Foley weights inside the container (~20 GB)
+# Generation-only steps (always run):
+#   1. Create directory structure in parent directory
+#   2. Clone MMAudio and HunyuanVideo-Foley repositories
+#   3. Build the Docker image (generation-api)
+#   4. Create 'mmaudio' and 'hyvf' conda environments inside the container
+#   5. Download HunyuanVideo-Foley weights inside the container (~20 GB)
 #
-# After this completes, start the APIs with:
-#   docker compose -f docker-compose.generation.yml up -d
+# Full stack additional steps (default, skipped with --generation-only):
+#   6. Copy .env.example → .env (if .env doesn't exist)
+#   7. Build the sound-search-api Docker image
+#   8. Check cloudflared credentials (warns if missing)
+#   9. Check BBC sounds directory (warns if missing)
+#  10. Start PostgreSQL, download DB dump if needed, restore it
+#
+# After this completes:
+#   Generation only:  docker compose -f docker-compose.generation.yml up -d
+#   Full stack:       docker compose -f docker-compose.full.yml up -d
 # ==============================================================================
 
-set -e  # Exit on any error
+set -e
+
+# Parse arguments
+FULL_STACK=true
+for arg in "$@"; do
+    case "$arg" in
+        --generation-only) FULL_STACK=false ;;
+        *) echo "Unknown argument: $arg"; exit 1 ;;
+    esac
+done
 
 # Resolve paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo ""
+if [ "$FULL_STACK" = true ]; then
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║        thesis-pt-v2a — Generation Backend Setup             ║"
+echo "║            thesis-pt-v2a — Full Stack Setup                 ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
+else
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║      thesis-pt-v2a — Generation Backend Setup               ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo "   Tip: run without --generation-only to set up the complete stack"
+fi
 echo ""
 echo "  Repo:        $SCRIPT_DIR"
 echo "  Parent dir:  $PARENT_DIR"
@@ -34,7 +59,7 @@ echo ""
 # ==============================================================================
 # STEP 1: Create directory structure
 # ==============================================================================
-echo "── Step 1/5: Creating directory structure"
+echo "── Step 1: Creating directory structure"
 mkdir -p "$PARENT_DIR/model-tests/repos"
 mkdir -p "$PARENT_DIR/model-tests/models"
 mkdir -p "$PARENT_DIR/conda-envs"
@@ -44,9 +69,8 @@ echo "   ✓ Directories ready"
 # STEP 2: Clone model repositories
 # ==============================================================================
 echo ""
-echo "── Step 2/5: Cloning model repositories"
+echo "── Step 2: Cloning model repositories"
 
-# MMAudio
 if [ -d "$PARENT_DIR/model-tests/repos/MMAudio/.git" ]; then
     echo "   ✓ MMAudio already cloned — skipping"
 else
@@ -56,7 +80,6 @@ else
     echo "   ✓ MMAudio cloned"
 fi
 
-# HunyuanVideo-Foley
 if [ -d "$PARENT_DIR/model-tests/repos/HunyuanVideo-Foley/.git" ]; then
     echo "   ✓ HunyuanVideo-Foley already cloned — skipping"
 else
@@ -67,10 +90,10 @@ else
 fi
 
 # ==============================================================================
-# STEP 3: Build Docker image
+# STEP 3: Build generation-api Docker image
 # ==============================================================================
 echo ""
-echo "── Step 3/5: Building Docker image (generation-api)"
+echo "── Step 3: Building Docker image (generation-api)"
 cd "$SCRIPT_DIR"
 docker compose -f docker-compose.generation.yml build
 echo "   ✓ Docker image built"
@@ -79,9 +102,8 @@ echo "   ✓ Docker image built"
 # STEP 4: Create conda environments inside the container
 # ==============================================================================
 echo ""
-echo "── Step 4/5: Creating conda environments (this may take a few minutes)"
+echo "── Step 4: Creating conda environments (this may take a few minutes)"
 
-# --- mmaudio environment ---
 if [ -d "$PARENT_DIR/conda-envs/mmaudio" ]; then
     echo "   ✓ 'mmaudio' conda env already exists — skipping"
 else
@@ -101,7 +123,6 @@ else
     echo "   ✓ 'mmaudio' environment created"
 fi
 
-# --- hyvf environment ---
 if [ -d "$PARENT_DIR/conda-envs/hyvf" ]; then
     echo "   ✓ 'hyvf' conda env already exists — skipping"
 else
@@ -123,13 +144,9 @@ fi
 
 # ==============================================================================
 # STEP 5: Download HunyuanVideo-Foley weights inside the container
-#
-# Weights are downloaded using huggingface-cli from the hyvf conda environment
-# (no host-side huggingface-cli required — pip is used inside the container).
-# Download destination: ../model-tests/models/HunyuanVideo-Foley/ (host disk)
 # ==============================================================================
 echo ""
-echo "── Step 5/5: Checking HunyuanVideo-Foley model weights"
+echo "── Step 5: Checking HunyuanVideo-Foley model weights"
 
 HYVF_WEIGHTS_DIR="$PARENT_DIR/model-tests/models/HunyuanVideo-Foley"
 if [ -d "$HYVF_WEIGHTS_DIR" ] && [ -n "$(ls -A "$HYVF_WEIGHTS_DIR" 2>/dev/null)" ]; then
@@ -151,36 +168,201 @@ fi
 echo "   ℹ  MMAudio weights auto-download on first API call (~4 GB)"
 
 # ==============================================================================
-# Cleanup: Remove any leftover named containers from the env creation steps.
-#
-# 'docker compose run' can leave named containers behind when container_name is
-# set in the compose file. These must be removed before 'docker compose up' can
-# create the actual service containers.
-#
-# NOTE: The conda environments (mmaudio, hyvf) are stored in ../conda-envs/ on
-# the HOST filesystem via the volume mount — removing containers does NOT delete
-# them. They persist across container removals and Docker image rebuilds.
+# Cleanup generation setup containers
 # ==============================================================================
 echo ""
-echo "── Cleanup: Removing setup containers (envs are safe on host disk)"
+echo "── Cleanup: Removing generation setup containers"
 docker rm -f gen-mmaudio-api gen-hyvf-api 2>/dev/null || true
 echo "   ✓ Done"
+
+# ==============================================================================
+# ── FULL STACK STEPS (--full only) ──────────────────────────────────────────
+# ==============================================================================
+if [ "$FULL_STACK" = false ]; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                    ✅ Setup complete!                        ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "  Start the generation APIs:"
+    echo "    docker compose -f docker-compose.generation.yml up -d"
+    echo ""
+    exit 0
+fi
+
+echo ""
+echo "══════════════════════════════════════════════════════════════"
+echo "   Full Stack Setup"
+echo "══════════════════════════════════════════════════════════════"
+
+# ==============================================================================
+# STEP 6: Copy .env if it doesn't exist
+# ==============================================================================
+echo ""
+echo "── Step 6: Environment configuration"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    echo "   ✓ .env already exists — skipping"
+else
+    cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+    echo "   ✓ Created .env from .env.example"
+    echo "   ℹ  Edit .env to set BBC_SOUNDS_DIR, DB_DUMP_URL, TUNNEL_TOKEN etc."
+fi
+
+# Source .env for subsequent steps (strip comments and empty lines)
+set -a
+source <(grep -v '^#' "$SCRIPT_DIR/.env" | grep -v '^[[:space:]]*$') 2>/dev/null || true
+set +a
+
+# ==============================================================================
+# STEP 7: Build sound-search-api Docker image
+# ==============================================================================
+echo ""
+echo "── Step 7: Building sound-search-api Docker image"
+docker compose -f docker-compose.full.yml build sound-search-api
+echo "   ✓ sound-search-api image built"
+
+# ==============================================================================
+# STEP 8: Check cloudflared credentials
+# ==============================================================================
+echo ""
+echo "── Step 8: Checking cloudflared credentials"
+CF_JSON=$(ls "$SCRIPT_DIR/cloudflared/"*.json 2>/dev/null | head -1)
+if [ -n "${TUNNEL_TOKEN}" ]; then
+    echo "   ✓ TUNNEL_TOKEN set — will use token-based auth"
+elif [ -n "$CF_JSON" ] && [ -f "$SCRIPT_DIR/cloudflared/config.yml" ]; then
+    echo "   ✓ Credentials file found: $(basename "$CF_JSON")"
+    echo "   ✓ config.yml present"
+else
+    echo ""
+    echo "   ⚠️  No cloudflared credentials found. Tunnel will not start."
+    echo ""
+    echo "   Option A — Token-based (recommended for new deployments):"
+    echo "     1. Go to: Cloudflare Zero Trust → Access → Tunnels"
+    echo "     2. Create/select a tunnel and copy its token"
+    echo "     3. Add to .env:  TUNNEL_TOKEN=<your-token>"
+    echo ""
+    echo "   Option B — Credentials file (existing deployments):"
+    echo "     1. Copy cloudflared/config.yml.example → cloudflared/config.yml"
+    echo "     2. Edit with your tunnel name and UUID"
+    echo "     3. Place <uuid>.json in cloudflared/"
+    echo "     4. Run: cloudflared tunnel login  (saves cert.pem)"
+    echo ""
+fi
+
+# ==============================================================================
+# STEP 9: Check BBC sounds directory
+# ==============================================================================
+echo ""
+echo "── Step 9: Checking BBC sounds directory"
+BBC_DIR="${BBC_SOUNDS_DIR:-$PARENT_DIR/BBCSoundDownloader/sounds}"
+if [ -d "$BBC_DIR" ] && [ -n "$(ls -A "$BBC_DIR" 2>/dev/null)" ]; then
+    SOUND_COUNT=$(find "$BBC_DIR" -name "*.wav" 2>/dev/null | wc -l | tr -d ' ')
+    echo "   ✓ BBC sounds found: $SOUND_COUNT .wav files"
+    echo "     Path: $BBC_DIR"
+else
+    echo "   ⚠️  BBC sounds not found at: $BBC_DIR"
+    echo "   Sound search queries will work but return no audio files."
+    echo "   Set BBC_SOUNDS_DIR in .env if your sounds are elsewhere."
+fi
+
+# ==============================================================================
+# STEP 10: PostgreSQL — start, download dump (if needed), restore
+# ==============================================================================
+echo ""
+echo "── Step 10: Database setup (PostgreSQL + BBC Sound Archive)"
+
+DB_DUMP="$SCRIPT_DIR/db-dump/bbc_sounds.dump"
+mkdir -p "$SCRIPT_DIR/db-dump"
+
+# Download dump if URL is set and file not present
+if [ -f "$DB_DUMP" ]; then
+    echo "   ✓ Database dump already at db-dump/bbc_sounds.dump"
+elif [ -n "${DB_DUMP_URL}" ]; then
+    echo "   Downloading database dump (~100-400 MB)..."
+    # Handle Google Drive URLs — extract file ID and use direct download endpoint
+    if echo "${DB_DUMP_URL}" | grep -q "drive.google.com"; then
+        GDRIVE_ID=$(echo "${DB_DUMP_URL}" | sed 's|.*/file/d/\([^/?]*\).*|\1|; s|.*[?&]id=\([^&]*\).*|\1|')
+        GDRIVE_DL="https://drive.usercontent.google.com/download?id=${GDRIVE_ID}&export=download&confirm=t"
+        echo "   (Google Drive detected — using direct download URL)"
+        curl -L --progress-bar -o "$DB_DUMP" "$GDRIVE_DL"
+    else
+        curl -L --progress-bar -o "$DB_DUMP" "${DB_DUMP_URL}"
+    fi
+    echo "   ✓ Download complete"
+else
+    echo "   ℹ  No database dump found (set DB_DUMP_URL in .env to auto-download)"
+    echo "   PostgreSQL will start with an empty database."
+fi
+
+# Start postgres
+cd "$SCRIPT_DIR"
+echo "   Starting postgres..."
+docker compose -f docker-compose.full.yml up -d postgres
+
+# Wait for postgres to be healthy
+echo -n "   Waiting for postgres..."
+ATTEMPTS=0
+until docker compose -f docker-compose.full.yml exec -T postgres \
+        pg_isready -U ludwig -d bbc_sounds &>/dev/null; do
+    echo -n "."
+    sleep 2
+    ATTEMPTS=$((ATTEMPTS + 1))
+    if [ "$ATTEMPTS" -gt 30 ]; then
+        echo " timed out!"
+        echo "   ⚠️  Check logs: docker compose -f docker-compose.full.yml logs postgres"
+        break
+    fi
+done
+echo " ✓"
+
+# Restore dump if available and DB is empty
+if [ -f "$DB_DUMP" ]; then
+    # Check if DB already has data
+    SOUND_COUNT=$(docker compose -f docker-compose.full.yml exec -T postgres \
+        psql -U ludwig -d bbc_sounds -t -c "SELECT COUNT(*) FROM bbc_sounds;" \
+        2>/dev/null | tr -d '[:space:]') || SOUND_COUNT="0"
+
+    if [ "${SOUND_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+        echo "   ✓ Database already populated (${SOUND_COUNT} sounds) — skipping restore"
+    else
+        echo "   Restoring BBC Sound Archive (this may take a few minutes)..."
+        POSTGRES_CID=$(docker compose -f docker-compose.full.yml ps -q postgres)
+        docker cp "$DB_DUMP" "${POSTGRES_CID}:/tmp/bbc_sounds.dump"
+        docker compose -f docker-compose.full.yml exec -T postgres \
+            pg_restore -U ludwig -d bbc_sounds --data-only --no-owner /tmp/bbc_sounds.dump
+        docker compose -f docker-compose.full.yml exec -T postgres \
+            rm /tmp/bbc_sounds.dump
+        FINAL_COUNT=$(docker compose -f docker-compose.full.yml exec -T postgres \
+            psql -U ludwig -d bbc_sounds -t -c "SELECT COUNT(*) FROM bbc_sounds;" \
+            2>/dev/null | tr -d '[:space:]') || FINAL_COUNT="?"
+        echo "   ✓ Database restored (${FINAL_COUNT} sounds)"
+    fi
+fi
+
+# Stop postgres (will restart cleanly with 'up -d')
+docker compose -f docker-compose.full.yml stop postgres
 
 # ==============================================================================
 # Done
 # ==============================================================================
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║                    ✅ Setup complete!                        ║"
+echo "║                    ✅ Full setup complete!                   ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
-echo "  Start the APIs:"
-echo "    docker compose -f docker-compose.generation.yml up -d"
+echo "  Start the full stack:"
+echo "    docker compose -f docker-compose.full.yml up -d"
 echo ""
-echo "  Check health:"
+echo "  Health checks:"
 echo "    curl http://localhost:8000/health   # MMAudio"
 echo "    curl http://localhost:8001/health   # HunyuanVideo-Foley"
+echo "    curl http://localhost:8002/health   # Sound Search"
 echo ""
 echo "  View logs:"
-echo "    docker compose -f docker-compose.generation.yml logs -f"
+echo "    docker compose -f docker-compose.full.yml logs -f"
+echo ""
+echo "  Need to create a DB dump from your current data?"
+echo "    docker exec -t gen-postgres \\"
+echo "        pg_dump -U ludwig --data-only --no-owner -Fc bbc_sounds \\"
+echo "        > db-dump/bbc_sounds.dump"
 echo ""

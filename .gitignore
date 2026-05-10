@@ -168,3 +168,10 @@ companion/api/config.json
 # cloudflared secret files
 cloudflared/cert.pem
 cloudflared/*.json
+
+# Database dumps (too large for git — see db-dump/README.md)
+db-dump/*.dump
+db-dump/*.sql
+
+# Local environment configuration (contains secrets)
+.env
