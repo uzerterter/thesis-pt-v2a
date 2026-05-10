@@ -22,7 +22,6 @@ Make sure the following are installed on the host machine before running setup:
 | **Docker** + **Docker Compose** (v2+) | https://docs.docker.com/engine/install |
 | **NVIDIA Container Toolkit** | https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html |
 | **git** | `apt install git` |
-| **huggingface-cli** (for weight downloads) | `pip install huggingface-hub` |
 
 Verify Docker can see your GPU:
 ```bash
@@ -88,11 +87,12 @@ That's it. The APIs will start automatically.
 |------|-------------|
 | 1 | Creates `../model-tests/repos/`, `../model-tests/models/`, `../conda-envs/` |
 | 2 | Clones MMAudio and HunyuanVideo-Foley repos |
-| 3 | Downloads HunyuanVideo-Foley weights (~20 GB via `huggingface-cli`) |
-| 4 | Builds the Docker image (`generation-api:latest`) |
-| 5 | Creates `mmaudio` conda env (Python 3.11 + PyTorch + MMAudio) |
-| 5 | Creates `hyvf` conda env (Python 3.10 + PyTorch + HunyuanVideo-Foley) |
+| 3 | Builds the Docker image (`generation-api:latest`) |
+| 4 | Creates `mmaudio` conda env (Python 3.11 + PyTorch + MMAudio) |
+| 4 | Creates `hyvf` conda env (Python 3.10 + PyTorch + HunyuanVideo-Foley) |
+| 5 | Downloads HunyuanVideo-Foley weights **inside the container** (~20 GB) |
 
+No host-side `huggingface-cli` required — `setup.sh` installs and uses it from inside the Docker container.  
 MMAudio weights (~4 GB) are downloaded automatically on the first API call.
 
 ---
@@ -185,10 +185,15 @@ docker compose -f docker-compose.generation.yml logs -f mmaudio-api
 ```
 
 **HunyuanVideo-Foley weights not found**  
-→ Download them manually:
+→ Re-run `bash setup.sh` — step 5 will detect missing weights and download them.  
+→ Or download manually inside the container:
 ```bash
-huggingface-cli download tencent/HunyuanVideo-Foley \
-    --local-dir ../model-tests/models/HunyuanVideo-Foley
+docker exec -it gen-hyvf-api /bin/bash -c "
+  source /opt/miniforge/etc/profile.d/conda.sh &&
+  conda run -n hyvf pip install -q huggingface_hub &&
+  conda run -n hyvf huggingface-cli download tencent/HunyuanVideo-Foley \
+    --local-dir /workspace/model-tests/models/HunyuanVideo-Foley
+"
 ```
 
 ---

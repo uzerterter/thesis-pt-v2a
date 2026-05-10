@@ -8,9 +8,9 @@
 # What this does:
 #   1. Creates the required directory structure in the parent directory
 #   2. Clones MMAudio and HunyuanVideo-Foley model repositories
-#   3. Downloads HunyuanVideo-Foley model weights from HuggingFace
-#   4. Builds the Docker image
-#   5. Creates the 'mmaudio' and 'hyvf' conda environments inside the container
+#   3. Builds the Docker image
+#   4. Creates the 'mmaudio' and 'hyvf' conda environments inside the container
+#   5. Downloads HunyuanVideo-Foley weights inside the container (~20 GB)
 #
 # After this completes, start the APIs with:
 #   docker compose -f docker-compose.generation.yml up -d
@@ -67,51 +67,19 @@ else
 fi
 
 # ==============================================================================
-# STEP 3: Download model weights
+# STEP 3: Build Docker image
 # ==============================================================================
 echo ""
-echo "── Step 3/5: Downloading model weights"
-
-# HunyuanVideo-Foley weights (~20 GB from HuggingFace)
-HYVF_WEIGHTS_DIR="$PARENT_DIR/model-tests/models/HunyuanVideo-Foley"
-if [ -d "$HYVF_WEIGHTS_DIR" ] && [ -n "$(ls -A "$HYVF_WEIGHTS_DIR" 2>/dev/null)" ]; then
-    echo "   ✓ HunyuanVideo-Foley weights already present — skipping"
-else
-    echo "   Downloading HunyuanVideo-Foley weights (~20 GB)..."
-    if command -v huggingface-cli &>/dev/null; then
-        huggingface-cli download tencent/HunyuanVideo-Foley \
-            --local-dir "$HYVF_WEIGHTS_DIR"
-        echo "   ✓ Weights downloaded to $HYVF_WEIGHTS_DIR"
-    else
-        echo ""
-        echo "   ⚠️  huggingface-cli not found."
-        echo "   Install it with:  pip install huggingface-hub"
-        echo "   Then run manually:"
-        echo ""
-        echo "     huggingface-cli download tencent/HunyuanVideo-Foley \\"
-        echo "         --local-dir $HYVF_WEIGHTS_DIR"
-        echo ""
-        echo "   Continuing setup — you can download weights later."
-    fi
-fi
-
-# MMAudio weights: downloaded automatically on first API call (~4 GB)
-echo "   ℹ  MMAudio weights auto-download on first API call (~4 GB)"
-
-# ==============================================================================
-# STEP 4: Build Docker image
-# ==============================================================================
-echo ""
-echo "── Step 4/5: Building Docker image (generation-api)"
+echo "── Step 3/5: Building Docker image (generation-api)"
 cd "$SCRIPT_DIR"
 docker compose -f docker-compose.generation.yml build
 echo "   ✓ Docker image built"
 
 # ==============================================================================
-# STEP 5: Create conda environments inside the container
+# STEP 4: Create conda environments inside the container
 # ==============================================================================
 echo ""
-echo "── Step 5/5: Creating conda environments (this may take a few minutes)"
+echo "── Step 4/5: Creating conda environments (this may take a few minutes)"
 
 # --- mmaudio environment ---
 if [ -d "$PARENT_DIR/conda-envs/mmaudio" ]; then
@@ -152,6 +120,35 @@ else
     "
     echo "   ✓ 'hyvf' environment created"
 fi
+
+# ==============================================================================
+# STEP 5: Download HunyuanVideo-Foley weights inside the container
+#
+# Weights are downloaded using huggingface-cli from the hyvf conda environment
+# (no host-side huggingface-cli required — pip is used inside the container).
+# Download destination: ../model-tests/models/HunyuanVideo-Foley/ (host disk)
+# ==============================================================================
+echo ""
+echo "── Step 5/5: Checking HunyuanVideo-Foley model weights"
+
+HYVF_WEIGHTS_DIR="$PARENT_DIR/model-tests/models/HunyuanVideo-Foley"
+if [ -d "$HYVF_WEIGHTS_DIR" ] && [ -n "$(ls -A "$HYVF_WEIGHTS_DIR" 2>/dev/null)" ]; then
+    echo "   ✓ HunyuanVideo-Foley weights already present — skipping"
+else
+    echo "   Downloading HunyuanVideo-Foley weights (~20 GB)..."
+    echo "   (This may take a while depending on your connection)"
+    docker compose -f docker-compose.generation.yml run --rm hunyuanvideo-foley-api /bin/bash -c "
+        set -e
+        source /opt/miniforge/etc/profile.d/conda.sh
+        conda run -n hyvf pip install -q huggingface_hub
+        conda run -n hyvf huggingface-cli download tencent/HunyuanVideo-Foley \
+            --local-dir /workspace/model-tests/models/HunyuanVideo-Foley
+        echo 'weights download OK'
+    "
+    echo "   ✓ Weights downloaded to $HYVF_WEIGHTS_DIR"
+fi
+
+echo "   ℹ  MMAudio weights auto-download on first API call (~4 GB)"
 
 # ==============================================================================
 # Cleanup: Remove any leftover named containers from the env creation steps.
