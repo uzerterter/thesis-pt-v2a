@@ -127,10 +127,9 @@ services:
   # ── Tunnel: Cloudflare ───────────────────────────────────
   # Exposes all three APIs via your Cloudflare domain.
   #
-  # Two auth approaches (set ONE in .env):
-  #   A) TUNNEL_TOKEN=<token>  — token-based (simpler, no local files)
-  #   B) Place credentials JSON in cloudflared/ + update config.yml
-  #      (see cloudflared/config.yml.example)
+  # Requires: TUNNEL_TOKEN set in .env
+  #   Get it: Cloudflare Zero Trust → Networks → Tunnels
+  #           → your tunnel → Configure → Token (single line, starts with eyJ)
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: gen-cloudflared
@@ -139,19 +138,10 @@ services:
       - mmaudio-api
       - hunyuanvideo-foley-api
       - sound-search-api
-    volumes:
-      - ./cloudflared:/etc/cloudflared
     environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
-    # Auto-selects auth method: token if TUNNEL_TOKEN is set, config file otherwise
-    command: >
-      /bin/sh -c "
-        if [ -n \"$$TUNNEL_TOKEN\" ]; then
-          cloudflared tunnel --no-autoupdate run --token $$TUNNEL_TOKEN;
-        else
-          cloudflared tunnel --no-autoupdate run;
-        fi
-      "
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    # Pass token directly as cloudflared args (image ENTRYPOINT is 'cloudflared')
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
 
 volumes:
   gen-postgres-data:
