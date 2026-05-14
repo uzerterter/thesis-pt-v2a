@@ -300,14 +300,30 @@ if [ -f "$DB_DUMP" ]; then
     echo "   ✓ Database dump already at db-dump/bbc_sounds.dump"
 elif [ -n "${DB_DUMP_URL}" ]; then
     echo "   Downloading database dump (~100-400 MB)..."
-    # Handle Google Drive URLs — extract file ID and use direct download endpoint
+    # Handle Google Drive URLs — two-step cookie-based download to bypass virus-scan
     if echo "${DB_DUMP_URL}" | grep -q "drive.google.com"; then
         GDRIVE_ID=$(echo "${DB_DUMP_URL}" | sed 's|.*/file/d/\([^/?]*\).*|\1|; s|.*[?&]id=\([^&]*\).*|\1|')
-        GDRIVE_DL="https://drive.usercontent.google.com/download?id=${GDRIVE_ID}&export=download&confirm=t"
-        echo "   (Google Drive detected — using direct download URL)"
-        curl -L --progress-bar -o "$DB_DUMP" "$GDRIVE_DL"
+        GDRIVE_COOKIES=$(mktemp)
+        echo "   (Google Drive detected — two-step download with virus-scan bypass)"
+        # Step 1: seed session cookies
+        curl -sc "$GDRIVE_COOKIES" \
+            "https://drive.google.com/uc?id=${GDRIVE_ID}&export=download" \
+            -o /dev/null 2>/dev/null
+        # Step 2: actual download with cookies + confirm=t
+        curl -Lb "$GDRIVE_COOKIES" --progress-bar \
+            "https://drive.google.com/uc?id=${GDRIVE_ID}&export=download&confirm=t" \
+            -o "$DB_DUMP"
+        rm -f "$GDRIVE_COOKIES"
     else
         curl -L --progress-bar -o "$DB_DUMP" "${DB_DUMP_URL}"
+    fi
+    # Validate: reject HTML pages / empty files
+    FILE_SIZE=$(stat -c%s "$DB_DUMP" 2>/dev/null || echo 0)
+    if [ "$FILE_SIZE" -lt 100000 ]; then
+        echo "   ✗ Download failed or returned HTML (${FILE_SIZE} bytes)."
+        echo "   Ensure the Google Drive file is shared 'Anyone with the link → Viewer'."
+        rm -f "$DB_DUMP"
+        exit 1
     fi
     echo "   ✓ Download complete"
 else
