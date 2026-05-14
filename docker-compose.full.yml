@@ -141,7 +141,9 @@ services:
     environment:
       - TUNNEL_TOKEN=${TUNNEL_TOKEN}
     # Pass token directly as cloudflared args (image ENTRYPOINT is 'cloudflared')
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    # --protocol http2: force TCP/HTTP2 instead of QUIC/UDP to avoid
+    # Docker container UDP buffer size limitations (QUIC needs 7 MB, containers get ~400 KB)
+    command: tunnel --no-autoupdate run --protocol http2 --token ${TUNNEL_TOKEN}
 
 volumes:
   gen-postgres-data:

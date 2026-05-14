@@ -223,20 +223,37 @@ docker exec -it gen-hyvf-api /bin/bash -c "
 
 ### Cloudflared Tunnel
 
-Two approaches are supported:
+The stack uses a **dashboard-managed tunnel** with a connector token — no local credential files needed.
 
-**Option A — Token-based (recommended for new deployments):**
-1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → Access → Tunnels
-2. Create a tunnel and copy the token
-3. Add to `.env`: `TUNNEL_TOKEN=<your-token>`
+#### Step 1 — Create a tunnel (or migrate an existing one)
 
-**Option B — Credentials file (recommended if you already have a tunnel):**
-1. Copy `cloudflared/config.yml.example` → `cloudflared/config.yml`
-2. Replace tunnel name, UUID, and hostnames with your values
-3. Place your `<uuid>.json` credentials file in `cloudflared/`
-4. Run `cloudflared tunnel login` (saves `cert.pem`) if not already done
+**New deployment:**
+1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → Networks → Tunnels → **Create a tunnel**
+2. Choose **Cloudflared**, give it a name (e.g. `my-thesis-apis`)
+3. Under **Public Hostnames**, add your three services:
+   | Subdomain | Domain | Service |
+   |-----------|--------|---------|
+   | `mmaudio` | your domain | `http://mmaudio-api:8000` |
+   | `hyvf` | your domain | `http://hunyuanvideo-foley-api:8001` |
+   | `sounds` | your domain | `http://sound-search-api:8002` |
+4. On the **Install connector** page, copy the token (the `eyJ...` string at the end of the `docker run` command)
 
-`setup.sh` (step 8) will detect which approach is configured and warn you if neither is set up.
+**Existing locally-managed tunnel** (created with `cloudflared tunnel create`):
+1. Go to **Networks → Tunnels** → select your tunnel → **Migrate**
+2. Confirm the migration — ingress rules are preserved, management moves to the dashboard
+3. After migration, click **Configure → Set up a connector → Refresh token** to get a valid post-migration token
+
+> ⚠️ Locally-managed tunnels use `cert.pem` + `UUID.json` and do **not** have a `TUNNEL_TOKEN`. You must migrate before the token approach works.
+
+#### Step 2 — Add to `.env`
+
+```bash
+TUNNEL_TOKEN=eyJhIjoiNDU...the single-line token from the dashboard...
+```
+
+`setup.sh` (step 8) will check that the token is set and warn if it's missing.
+
+> **Note:** `--protocol http2` is set in the compose command to force TCP/HTTP2 instead of QUIC/UDP. This avoids Docker container UDP buffer size limitations (QUIC requires ~7 MB, containers typically only get ~400 KB).
 
 ---
 

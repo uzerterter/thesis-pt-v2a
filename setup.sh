@@ -357,6 +357,21 @@ if [ -f "$DB_DUMP" ]; then
             psql -U ludwig -d bbc_sounds -t -c "SELECT COUNT(*) FROM bbc_sounds;" \
             2>/dev/null | tr -d '[:space:]') || FINAL_COUNT="?"
         echo "   ✓ Database restored (${FINAL_COUNT} sounds)"
+
+        # Build IVFFlat vector indexes now that the table is populated.
+        # Building on empty data produces meaningless cluster centroids, so we
+        # do this AFTER the restore rather than in the db-init SQL.
+        echo "   Building vector indexes (IVFFlat)..."
+        docker compose -f docker-compose.full.yml exec -T postgres \
+            psql -U ludwig -d bbc_sounds -c "
+                CREATE INDEX IF NOT EXISTS idx_text_emb
+                    ON bbc_sounds USING ivfflat (text_embedding vector_cosine_ops)
+                    WITH (lists = 100);
+                CREATE INDEX IF NOT EXISTS idx_text_emb_large
+                    ON bbc_sounds USING ivfflat (text_embedding_large vector_cosine_ops)
+                    WITH (lists = 100);
+            "
+        echo "   ✓ Vector indexes built"
     fi
 fi
 
@@ -383,7 +398,8 @@ echo "  View logs:"
 echo "    docker compose -f docker-compose.full.yml logs -f"
 echo ""
 echo "  Need to create a DB dump from your current data?"
-echo "    docker exec -t gen-postgres \\"
+echo "    docker exec gen-postgres \\"
 echo "        pg_dump -U ludwig --data-only --no-owner -Fc bbc_sounds \\"
 echo "        > db-dump/bbc_sounds.dump"
+echo "  Note: do NOT add -t (pseudo-TTY) — it corrupts binary (-Fc) output."
 echo ""
