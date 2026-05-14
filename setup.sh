@@ -299,7 +299,7 @@ mkdir -p "$SCRIPT_DIR/db-dump"
 if [ -f "$DB_DUMP" ]; then
     echo "   ✓ Database dump already at db-dump/bbc_sounds.dump"
 elif [ -n "${DB_DUMP_URL}" ]; then
-    echo "   Downloading database dump (~100-400 MB)..."
+    echo "   Downloading database dump..."
     # Handle Google Drive URLs — two-step cookie-based download to bypass virus-scan
     if echo "${DB_DUMP_URL}" | grep -q "drive.google.com"; then
         GDRIVE_ID=$(echo "${DB_DUMP_URL}" | sed 's|.*/file/d/\([^/?]*\).*|\1|; s|.*[?&]id=\([^&]*\).*|\1|')
